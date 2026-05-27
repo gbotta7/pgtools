@@ -24,7 +24,7 @@ void pg_opt_init(pg_opt_t *o)
 {
 	memset(o, 0, sizeof(pg_opt_t));
 	o->k = 31;
-	o->pre = 22;
+	o->pre = 10;
 	o->n_threads = 4;
 	o->chunk_size = 10000000;
 }

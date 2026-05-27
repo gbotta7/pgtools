@@ -5,7 +5,7 @@
 #include <stdint.h>
 
 #define PG_MAGIC "PGKM"
-#define COUNTER_BITS 22
+#define COUNTER_BITS 10
 #define COUNTER_MAX ((1U << COUNTER_BITS) - 1)
 
 typedef struct { // terminal options

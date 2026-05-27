@@ -23,6 +23,8 @@ pg_mht_t *pg_mht_init(int k, int pre)
 	CALLOC(h->h, 1<<h->pre); // allocate the array of partitions.
 	for (i = 0; i < 1<<h->pre; ++i) {
 		h->h[i].h = pg_ht_init(); // initialize hash table for each bucket.
+
+		pthread_mutex_init(&h->h[i].lock, NULL); // initialize lock for each partition
 	}
 	return h;
 }
@@ -31,8 +33,10 @@ void pg_mht_destroy(pg_mht_t *h)
 {
 	int i;
 	if (h == 0) return;
-	for (i = 0; i < 1<<h->pre; ++i)
+	for (i = 0; i < 1<<h->pre; ++i) {
+		pthread_mutex_destroy(&h->h[i].lock);
 		pg_ht_destroy(h->h[i].h); // destroy hash table for each bucket.
+	}
 	free(h->h); free(h);
 }
 
