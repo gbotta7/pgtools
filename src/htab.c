@@ -106,7 +106,7 @@ int pg_mht_dump(const pg_mht_t *h, const char *fn)
 			if (kh_exist(g, k))
 				fwrite(&kh_key(g, k), 8, 1, fp);
 	}
-	fprintf(stderr, "[M::%s] dumpped the hash table to file '%s'.\n", __func__, fn);
+	fprintf(stderr, "[M::%s] Dumpped the hash table to file '%s'.\n", __func__, fn);
 	fclose(fp);
 	return 0;
 }

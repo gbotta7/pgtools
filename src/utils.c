@@ -26,7 +26,8 @@ void pg_opt_init(pg_opt_t *o)
 	o->k = 31;
 	o->pre = 10;
 	o->n_threads = 4;
-	o->chunk_size = 10000000;
+	o->chunk_size = mm_parse_num("1.9g");
+	o->verbose = 1;
 }
 
 int64_t mm_parse_num(const char *str)

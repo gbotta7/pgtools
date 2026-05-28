@@ -20,12 +20,12 @@ typedef struct {
 typedef struct { 			// global data shared across all file threads
 	const pg_opt_t *opt; 	// terminal options
     const char **fns;
+	pg_mht_t *h;
+	pthread_mutex_t mutex;
     int n_fns;
-    pg_mht_t *h;
 	int next;               // index of next genome to process (also tracks n_genomes processed)
     int n_batch;            // number of parallel genome slots
     int *batch_threads;		// number of threads assigned to each file
-    pthread_mutex_t mutex;
 } filedat_t;
 
 typedef struct { 			// per-file data for each kt_pipeline() instance
@@ -37,10 +37,10 @@ typedef struct { 			// per-file data for each kt_pipeline() instance
 
 typedef struct { 			// data structure for each step in kt_pipeline()
     pldat_t *p;
-    int n, m, sum_len, nk;
-    int *len;
-    char **seq;
+	int *len;
 	ch_buf_t *buf;
+    char **seq;
+    int n, m, sum_len, nk;
 } stepdat_t;
 
 
@@ -137,10 +137,8 @@ static void *worker_pipeline(void *data, int step, void *in) // callback for kt_
 			free(s->buf[i].a);
 		}
 		__sync_fetch_and_add(&p->f->h->counts, n_ins); // multiple I/O threads that update the number of k-mers
-		free(s->buf);
-		// fprintf(stderr, "[M::%s::%.3f*%.2f] processed %d sequences; %ld distinct k-mers in the hash table\n", __func__,
-		// 		pg_realtime(), pg_cputime() / pg_realtime(), s->n, (long)p->f->h->counts);
-		free(s);
+
+		free(s->buf); free(s);
 	}
 	return 0;
 }
@@ -152,14 +150,25 @@ static void *file_worker(void *data)
 	filedat_t *fd = pl->f; // alias for convenience (not to use pl->f every time)
 
 	while (1) { // cannot use n_fns because different threads are concurrently updating the number of processed genomes
-        pthread_mutex_lock(&fd->mutex);
+
+		pthread_mutex_lock(&fd->mutex);
 		// grab next genome index
         int i = fd->next++;
-        pthread_mutex_unlock(&fd->mutex);
-
-        if (i >= fd->n_fns) break;  // all genomes have been processed, exit thread
-
+		if (i >= fd->n_fns) {
+			pthread_mutex_unlock(&fd->mutex);
+			break;  // all genomes have been processed, exit thread
+		}
         pl->fn = fd->fns[i];
+
+		if (fd->opt->verbose)
+			fprintf(stderr, "[M::%s] Processing '%s'\n", __func__, pl->fn);
+		// if (pl->f->next == 10) {
+		// 	fprintf(stderr, "[M::%s] %d genomes done, filtering singletons\n", __func__, pl->f->n_gnms);
+		// 	pg_mht_filter(pl->f->h);
+		// }
+
+		pthread_mutex_unlock(&fd->mutex);
+
         gzFile fp = gzopen(pl->fn, "r");
         if (fp == 0) {
             fprintf(stderr, "[E::%s] failed to open '%s'\n", __func__, pl->fn);
@@ -170,13 +179,11 @@ static void *file_worker(void *data)
         kseq_destroy(pl->ks);
         gzclose(fp);
 
-        pthread_mutex_lock(&fd->mutex);
-		// if (pl->f->next == 10) {
-		// 	fprintf(stderr, "[M::%s] %d genomes done, filtering singletons\n", __func__, pl->f->n_gnms);
-		// 	pg_mht_filter(pl->f->h);
-		// }
-        pthread_mutex_unlock(&fd->mutex);
-    }
+		// pthread_mutex_lock(&fd->mutex);
+		// if (fd->opt->verbose)
+		// 	fprintf(stderr, "[M::%s] %d genomes done, %ld distinct k-mers in the hash table\n", __func__, fd->next, (long)fd->h->counts);
+		// pthread_mutex_unlock(&fd->mutex);
+	}
 	
     pthread_exit(0);
 }
@@ -190,7 +197,7 @@ pg_mht_t *pg_count(const char **fns, int n_fns, const pg_opt_t *opt)
     fd.opt = opt;
     fd.h = pg_mht_init(opt->k, opt->pre);
 	fd.next = 0;
-	// split thread among input files as evenly as possible
+	// split threads among input files as evenly as possible
 	fd.batch_threads = (int*)calloc(n_fns, sizeof(int));
 	fd.n_batch = assign_threads(opt->n_threads, n_fns, fd.batch_threads);
 

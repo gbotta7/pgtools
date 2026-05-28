@@ -13,6 +13,7 @@ typedef struct { // terminal options
     int64_t n_threads;
 	int32_t k;
     int32_t pre; // number of bits for partitioning.
+    int verbose;
 } pg_opt_t;
 
 struct pg_ht_t; // see khashl.h and htab.c for the definition of pg_ht_t.

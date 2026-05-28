@@ -163,6 +163,7 @@ void kt_pipeline(int n_threads, void *(*func)(void*, int, void*), void *shared_d
 int assign_threads(int n_threads, int n_fns, int *out) {
     int best_batch = 1;
 
+	if (n_threads < 1) n_threads = 1;
 	if (n_threads > 8*n_fns) {
 		best_batch = n_fns;
 	}
