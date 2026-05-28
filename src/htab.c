@@ -7,9 +7,10 @@
 #include "khashl.h" // hash table
 #include "utils.h"
 
-#define pg_h_eq(a, b) ((a)>>COUNTER_BITS == (b)>>COUNTER_BITS) // lower COUNTER_BITS for counts; higher bits for SNPs (compare only them).
-#define pg_h(a) ((a)>>COUNTER_BITS) // hash only the k-mer part (higher bits).
-KHASHL_SET_INIT(, pg_ht_t, pg_ht, uint64_t, pg_h, pg_h_eq)
+// #define pg_h_eq(a, b) ((a)>>COUNTER_BITS == (b)>>COUNTER_BITS) // lower COUNTER_BITS for counts; higher bits for SNPs (compare only them).
+// #define pg_h(a) ((a)>>COUNTER_BITS) // hash only the k-mer part (higher bits).
+// KHASHL_SET_INIT(, pg_ht_t, pg_ht, uint96_t, pg_h, pg_h_eq)
+KHASHL_MAP_INIT(, pg_ht_t, pg_ht, uint64_t, uint32_t, kh_hash_uint64, kh_eq_generic)
 
 // Operations on hash tables and bloom filter.
 
@@ -55,23 +56,33 @@ void pg_mht_destroy(pg_mht_t *h)
 //     }
 // }
 
-int pg_mht_insert_list(pg_mht_t *h, int n, const uint64_t *a)
+int pg_mht_insert_list(pg_mht_t *h, int n, const ch_seq_t *a)
 {
 	int j, mask = (1<<h->pre) - 1, n_ins = 0;
 	pg_ht1_t *g;
 	if (n == 0) return 0;
-	g = &h->h[a[0]&mask]; // get hash table partition for the first (and all) k-mers.
+	g = &h->h[a[0].h_flanks&mask]; // get hash table partition for the first (and all) k-mers.
 	pthread_mutex_lock(&g->lock);
+	
 	for (j = 0; j < n; ++j) {
 		int absent;
-		uint64_t x = a[j] >> h->pre;
-		khint_t k;
-		if ((a[j]&mask) != (a[0]&mask)) continue;
-		k = pg_ht_put(g->h, x<<COUNTER_BITS, &absent);
-		if (absent) ++n_ins;
-		if ((kh_key(g->h, k)&COUNTER_MAX) < COUNTER_MAX)
-			++kh_key(g->h, k);
+		uint64_t key;
+		uint32_t cb = a[j].cb;
+		key = a[j].h_flanks >> h->pre;
+		if ((a[j].h_flanks & mask) != (a[0].h_flanks & mask)) continue;
+
+		khint_t k = pg_ht_put(g->h, key, &absent);
+		if (absent) {
+			++n_ins;
+			kh_val(g->h, k) = val_pack(1, 0, cb);  // first occurrence, SNP unknown
+		} else {
+			uint32_t v = kh_val(g->h, k);
+			uint32_t cnt = val_count(v);
+			uint32_t snp = val_snp(v) | (cb != val_cb(v));  // set SNP if CB differs
+			kh_val(g->h, k) = val_pack(cnt < COUNTER_MAX ? cnt + 1 : cnt, snp, val_cb(v));
+		}
 	}
+
 	pthread_mutex_unlock(&g->lock);
 	return n_ins;
 }
@@ -83,7 +94,7 @@ void pg_mht_tighten(pg_mht_t *h)
 	for (i = 0; i < 1<<h->pre; ++i) {
 		pg_ht_t *g = h->h[i].h;
 		if (kh_size(g) * 3 < kh_capacity(g))
-			pg_ht_resize(g, kh_size(g) * 3);
+			pg_ht_m_resize(g, kh_size(g) * 3);
 	}
 }
 

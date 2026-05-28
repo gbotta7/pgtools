@@ -164,7 +164,7 @@ int assign_threads(int n_threads, int n_fns, int *out) {
     int best_batch = 1;
 
 	if (n_threads < 1) n_threads = 1;
-	if (n_threads > 8*n_fns) {
+	if (n_threads > 4*n_fns) {
 		best_batch = n_fns;
 	}
 	else {
@@ -174,7 +174,7 @@ int assign_threads(int n_threads, int n_fns, int *out) {
 			int hi = base + (n_threads % b > 0 ? 1 : 0);
 			int lo = base;
 			if (lo < 3) break;   // below minimum, no point trying more genomes
-			if (hi > 8) continue; // would exceed cap, skip this batch size
+			if (hi > 4) continue; // would exceed cap, skip this batch size
 			best_batch = b;
 		}
 	}

@@ -14,7 +14,7 @@ KSEQ_INIT(gzFile, gzread)
 typedef struct {
 	int n, m;
 	uint64_t n_ins;
-	uint64_t *a;
+	ch_seq_t *a;
 } ch_buf_t;
 
 typedef struct { 			// global data shared across all file threads
@@ -52,7 +52,8 @@ static inline void ch_insert_buf(ch_buf_t *buf, int p, int k, uint64_t flanks, u
 		b->m = b->m < 8? 8 : b->m + (b->m>>1);
 		REALLOC(b->a, b->m);
 	}
-	b->a[b->n++] = center << ((k-1)*2) | flanks;
+	b->a[b->n++].h_flanks = flanks;
+	b->a[b->n++].cb = center;
 }
 
 static void count_seq_buf(ch_buf_t *buf, int k, int p, int len, const char *seq) // insert k-mers in $seq to linear buffer $buf
