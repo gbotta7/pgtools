@@ -45,6 +45,7 @@ int main_count(int argc, char *argv[])
 
 	// first step: count k-mers in the input files argv
     h = pg_count(&argv[o.ind], argc - o.ind, &opt, 0, 0);
+
 	int n_ins_tot = h->n_ins_tot;
 	
 	int n_del_tot;
@@ -54,7 +55,7 @@ int main_count(int argc, char *argv[])
 		fprintf(stderr, "[M::%s] Filtered %d k-mer entries\n", __func__, n_del_tot);
 	}
 
-	// if (fn_out1) pg_mht_dump(h, fn_out1, NULL);
+	// if (fn_out) pg_mht_dump(h, fn_out);
 
 	// second step: count SNP-mers in the input files argv
     h = pg_count(&argv[o.ind], argc - o.ind, &opt, 1, h);

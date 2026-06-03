@@ -70,6 +70,8 @@ void pg_mht_tighten(pg_mht_t *h);
 pg_mtx_t *pg_mht2mtx(const pg_mht_t *h, int n_fns, int n_kmers);
 void pg_mtx_dump(const char *fn, const pg_mht_t *h, const char **fns, const pg_mtx_t *m);
 
+void pg_mht_dump(const pg_mht_t *h, const char *fn);
+
 pg_mht_t *pg_count(const char **fns, int n_fns, const pg_opt_t *opt, int filt, pg_mht_t *h_init);
 
 #endif // HTAB_H
