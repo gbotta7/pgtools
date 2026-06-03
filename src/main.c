@@ -9,6 +9,7 @@ int main_count(int argc, char *argv[])
 {   
     pg_mht_t *h = 0;
 	char *fn_out = 0;
+	// char *fn_out2 = 0;
 	int c, i;
 	pg_opt_t opt;
 	ketopt_t o = KETOPT_INIT;
@@ -21,6 +22,7 @@ int main_count(int argc, char *argv[])
 		else if (c == 't') opt.n_threads = atoi(o.arg);
 		else if (c == 'v') opt.verbose = 1;
 		else if (c == 'o') fn_out = o.arg;
+		// else if (c == 'b') fn_out2 = o.arg;
 	}
 	if (argc - o.ind < 1) {
 		fprintf(stderr, "Usage: pgtools count [options] <in1.fa> [in2.fa [...]]\n");
@@ -31,7 +33,8 @@ int main_count(int argc, char *argv[])
 		fprintf(stderr, "  -t INT     number of worker threads [%d]\n", opt.n_threads);
 		fprintf(stderr, "  -K INT     chunk size [1.9g]\n");
 		fprintf(stderr, "  -v         verbose output\n");
-		fprintf(stderr, "  -o FILE    output k-mer dump []\n");
+		fprintf(stderr, "  -o FILE    output genome-specific SNP-mer tsv\n");
+		// fprintf(stderr, "  -b FILE   output genome-specific SNP-mer tsv\n");
 		return 1;
 	}
 	if (opt.k >= 32) {
@@ -39,17 +42,31 @@ int main_count(int argc, char *argv[])
 		return 1;
 	}
 
-    h = pg_count(&argv[o.ind], argc - o.ind, &opt); // count k-mers in the input files argv
 
+	// first step: count k-mers in the input files argv
+    h = pg_count(&argv[o.ind], argc - o.ind, &opt, 0, 0);
+	int n_ins_tot = h->n_ins_tot;
+	
+	int n_del_tot;
 	if (argc - o.ind > 1) {
 		fprintf(stderr, "[M::%s] Final filtering to get SNP-mers\n", __func__);
-		long long n_del = pg_mht_filter(h, argc - o.ind, argc - o.ind, opt.min_freq, 1); // final filter to keep only SNP-mers
-		fprintf(stderr, "[M::%s] Filtered %lld k-mer entries\n", __func__, n_del);
+		n_del_tot = pg_mht_filter(h, argc - o.ind, argc - o.ind, opt.min_freq); // filter to keep only SNP-mers
+		fprintf(stderr, "[M::%s] Filtered %d k-mer entries\n", __func__, n_del_tot);
 	}
+
+	// if (fn_out1) pg_mht_dump(h, fn_out1, NULL);
+
+	// second step: count SNP-mers in the input files argv
+    h = pg_count(&argv[o.ind], argc - o.ind, &opt, 1, h);
 
     pg_mht_tighten(h);
 
-    if (fn_out) pg_mht_dump(h, fn_out);
+	pg_mtx_t *m = pg_mht2mtx(h, argc - o.ind, n_ins_tot-n_del_tot);
+    if (fn_out) pg_mtx_dump(fn_out, h, &argv[o.ind], m);
+
+	free(m->snps);
+	free(m->mat);
+	free(m);
 
 	pg_mht_destroy(h);
 

@@ -37,9 +37,9 @@ void pg_mht_destroy(pg_mht_t *h)
 	free(h->h); free(h);
 }
 
-long long pg_mht_filter(pg_mht_t *h, int n_proc, int n_tot, double min_freq, int ff)
+int pg_mht_filter(pg_mht_t *h, int n_proc, int n_tot, double min_freq)
 {	
-	long long n_del = 0;
+	int n_del = 0;
     int i, n = 1 << h->pre;
 
     for (i = 0; i < n; ++i) {
@@ -52,10 +52,7 @@ long long pg_mht_filter(pg_mht_t *h, int n_proc, int n_tot, double min_freq, int
         for (k = 0; k < kh_end(g->h); ++k) {
 			if (!kh_exist(g->h, k)) continue;
 			uint32_t v = kh_val(g->h, k);
-			if ((double)(n_proc - val_count(v)) / n_tot > (1.0 - min_freq)) {
-				del_part[n_del_part++] = kh_key(g->h, k);
-			}
-			else if (ff && (!val_snp1(v) || val_snp2(v))) {
+			if ((double)(n_proc - (val_count1(v)) + (val_count2(v))) / n_tot > (1.0 - min_freq) || (!val_snp1(v) || val_snp2(v))) {
 				del_part[n_del_part++] = kh_key(g->h, k);
 			}
 		}
@@ -75,7 +72,7 @@ long long pg_mht_filter(pg_mht_t *h, int n_proc, int n_tot, double min_freq, int
 	return n_del;
 }
 
-int pg_mht_insert_list(pg_mht_t *h, int n, const ch_seq_t *a, int filt)
+int pg_mht_insert_list(pg_mht_t *h, int n, const ch_seq_t *a, uint64_t gnm_id)
 {
 	int j, mask = (1<<h->pre) - 1, n_ins = 0;
 	pg_ht1_t *g;
@@ -86,68 +83,98 @@ int pg_mht_insert_list(pg_mht_t *h, int n, const ch_seq_t *a, int filt)
 	
 	for (j = 0; j < n; ++j) {
 		int absent;
-		uint64_t key;
 		uint32_t cb = a[j].cb;
-		key = a[j].h_flanks >> h->pre;
-		if ((a[j].h_flanks & mask) != (a[0].h_flanks & mask)) continue;
+		uint64_t key;
+		key = (a[j].h_flanks >> h->pre) | (gnm_id << (8*sizeof(uint64_t) - h->pre));
 
-		if (filt) { // after filtering, do not insert k-mers
-			khint_t k = pg_ht_get(g->h, key);
-			absent = (k == kh_end(g->h));
-			if (!absent) { 
-				uint32_t v = kh_val(g->h, k);
-				uint32_t cnt = val_count(v);
-				uint32_t snp1, snp2, cb2 = val_cb2(v);
-				if (val_snp1(v) ^ val_snp2(v)) { // already known as SNP, check if it is multi-allelic
-					snp1 = 1;
-					if (cb != val_cb1(v) && cb != val_cb2(v)) {
-						snp2 = 1; // multi-allelic SNP
-					} else {
-						snp2 = 0; // bi-allelic SNP
-					}
-				} else {
-					if (val_snp1(v) & val_snp2(v)) { // already known as multi-allelic SNP
-						snp1 = 1; snp2 = 1; // already known as multi-allelic SNP
-					} else if (cb != val_cb1(v)) { // newly identified SNP
-						snp1 = 1; snp2 = 0;
-						cb2 = cb; // store the second central base
-					} else { // still non-SNP
-						snp1 = 0; snp2 = 0;
-					}
-				}
-				kh_val(g->h, k) = val_pack(cnt < COUNTER_MAX ? cnt + 1 : cnt, snp2, snp1, cb2, val_cb1(v));
-			}
-		} else { // before filtering, insert or update k-mers
-			khint_t k = pg_ht_put(g->h, key, &absent);
+		uint32_t cnt1 = 0, cnt2 = 0, cb1, cb2, snp1, snp2, v;
+
+		khint_t k = pg_ht_get(g->h, a[j].h_flanks >> h->pre);
+
+		// SNP-mers pass
+		if (gnm_id && k == kh_end(g->h)) 
+			continue; // this k-mer does not exist in the pangenome hash table (with gnm_id=0)
+		else if (gnm_id && k != kh_end(g->h)) { // this k-mer exists in the pangenome hash table, check if it exists in this genome and get the counts
+			uint32_t v_pgnm = kh_val(g->h, k);
+			// Inherit SNP state and cb assignments from pangenome
+			snp1 = val_snp1(v_pgnm);
+			snp2 = val_snp2(v_pgnm);
+			cb1  = val_cb1(v_pgnm);
+			cb2  = val_cb2(v_pgnm);
+
+			k = pg_ht_put(g->h, key, &absent);
+
 			if (absent) {
 				++n_ins;
-				kh_val(g->h, k) = val_pack(1, 0, 0, 0, cb);  // first occurrence, SNP unknown
+				if (cb == cb1) {
+					cnt1 = 1;
+				}
+				else {
+					cnt2 = 1;
+				}
+				kh_val(g->h, k) = val_pack(cnt2, cnt1, snp2, snp1, cb2, cb1); // first occurrence in this genome, SNP unknown
+			}
+			else {
+				v = kh_val(g->h, k);
+				cnt1 = val_count1(v);
+				cnt2 = val_count2(v);
+
+				if (cb == cb1) {
+					if (cnt1 < COUNTER_MAX) ++cnt1;
+				} else {
+					if (cnt2 < COUNTER_MAX) ++cnt2;
+				}
+			
+				kh_val(g->h, k) = val_pack(cnt2, cnt1, snp2, snp1, cb2, cb1);
+			}
+		}
+
+		// k-mers pass
+		else {
+			k = pg_ht_put(g->h, key, &absent);
+			if (absent) {
+				++n_ins;
+				kh_val(g->h, k) = val_pack(0, 1, 0, 0, 0, cb);  // first occurrence, SNP unknown
 			} else {
-				uint32_t v = kh_val(g->h, k);
-				uint32_t cnt = val_count(v);
-				uint32_t snp1, snp2, cb2 = 0;
+				v = kh_val(g->h, k);
+				cb1 = val_cb1(v);
+				cb2 = val_cb2(v);
+				cnt1 = val_count1(v);
+				cnt2 = val_count2(v);
 				if (val_snp1(v) ^ val_snp2(v)) { // already known as SNP, check if it is multi-allelic
 					snp1 = 1;
 					if (cb != val_cb1(v) && cb != val_cb2(v)) {
-						snp2 = 1; // multi-allelic SNP
+						snp2 = 1; // multi-allelic SNP (do not count)
 					} else {
 						snp2 = 0; // bi-allelic SNP
+						if (cb == val_cb1(v))
+							if (cnt1 < COUNTER_MAX) ++cnt1;
+						else 
+							if (cnt2 < COUNTER_MAX) ++cnt2;
 					}
 				} else {
 					if (val_snp1(v) & val_snp2(v)) { // already known as multi-allelic SNP
-						snp1 = 1; snp2 = 1; // already known as multi-allelic SNP
+						snp1 = 1; snp2 = 1; // already known as multi-allelic SNP (do not count)
+						if (cb == val_cb1(v))
+							if (cnt1 < COUNTER_MAX) cnt1 += 1;
+						else if (cb == val_cb2(v)) 
+							if (cnt2 < COUNTER_MAX) cnt2 += 1;
+						else continue;
 					} else if (cb != val_cb1(v)) { // newly identified SNP
 						snp1 = 1; snp2 = 0;
+						if (cnt2 < COUNTER_MAX) ++cnt2;
 						cb2 = cb; // store the second central base
 					} else { // still non-SNP
 						snp1 = 0; snp2 = 0;
+						if (cnt1 < COUNTER_MAX) ++cnt1;
 					}
 				}
-				kh_val(g->h, k) = val_pack(cnt < COUNTER_MAX ? cnt + 1 : cnt, snp2, snp1, cb2, val_cb1(v));
+
+				kh_val(g->h, k) = val_pack(cnt2, cnt1, snp2, snp1, cb2, cb1);
 			}
 		}
 	}
-
+	
 	pthread_mutex_unlock(&g->lock);
 	
 	return n_ins;
@@ -165,41 +192,135 @@ void pg_mht_tighten(pg_mht_t *h)
 }
 
 
-void pg_mht_dump(const pg_mht_t *h, const char *fn)
+pg_mtx_t *pg_mht2mtx(const pg_mht_t *h, int n_fns, int n_kmers)
 {
-	FILE *fp;
-	char seq[h->k+1];
-	int i;
-	uint64_t hash_mask = (1ULL<<((h->k-1)*2)) - 1; // to hash only the flanks
-	if ((fp = strcmp(fn, "-")? fopen(fn, "wb") : stdout) == 0) return -1;
-	fprintf(fp, "kmer\tsnp\tcount\n");
-	for (i = 0; i < 1<<h->pre; ++i) {
-		pg_ht_t *g = h->h[i].h;
-		khint_t k;
-		for (k = 0; k < kh_end(g); ++k)
-			if (kh_exist(g, k)) {
-				// reverse hash and obtain kmers
-				uint64_t flanks = pg_hash64_inv(kh_key(g, k) << h->pre | i, hash_mask); // reconstruct the full flanks
-				uint64_t v = kh_val(g, k);
+    pg_mtx_t *m;
+    CALLOC(m, 1);
 
-				int mid = h->k >> 1; // 15 for k=31
-				// right flank
-				for (int j = 0; j < mid; ++j)
-					seq[h->k-1-j] = nt4_seq_table[(flanks >> (j * 2)) & 3];
-				// central base
-				seq[mid] = nt4_seq_table[val_cb1(v)];
-				// left flank
-				for (int j = 0; j < mid; ++j)
-					seq[mid - 1 - j] = nt4_seq_table[(flanks >> ((mid + j) * 2)) & 3];
-				seq[h->k] = '\0';
-				
-				char cb1 = nt4_seq_table[val_cb1(v)];
-				char cb2 = nt4_seq_table[val_cb2(v)];
-				uint64_t cnt = val_count(v);
+    m->n_rows = 2 * n_kmers;
+    m->n_cols = n_fns;
 
-				fprintf(fp, "%s\t%c|%c\t%llu\n", seq, cb1, cb2, (unsigned long long)cnt);
-			}
-	}
-	fprintf(stderr, "[M::%s] Dumped the hash table to file '%s'.\n", __func__, fn);
-	fclose(fp);
+    m->snps = (pg_snp_t *)calloc(n_kmers, sizeof(pg_snp_t));
+    m->mat  = (uint64_t *)calloc(m->n_rows * m->n_cols, sizeof(uint64_t));
+
+    pg_mht_t *h_copy = pg_mht_init(h->k, h->pre);
+
+    int idx = 0;
+
+    for (int i = 0; i < (1 << h->pre); ++i) {
+        pg_ht_t *g = h->h[i].h;
+        pg_ht_t *g_copy = h_copy->h[i].h;
+
+        for (khint_t k = 0; k < kh_end(g); ++k) {
+            if (!kh_exist(g, k))
+                continue;
+
+            uint64_t key = kh_key(g, k) & ((1ULL << (64 - h->pre)) - 1);
+			khint_t k_pgnm = pg_ht_get(g, key);  // key has gnm_id bits = 0
+			if (k_pgnm == kh_end(g)) continue;
+			uint32_t v_pgnm = kh_val(g, k_pgnm);
+
+            int absent;
+            khint_t k_copy = pg_ht_put(g_copy, key, &absent);
+
+            if (!absent)
+                continue;
+
+            m->snps[idx].flanks = key;
+            m->snps[idx].cb1 = val_cb1(v_pgnm);
+            m->snps[idx].cb2 = val_cb2(v_pgnm);
+
+            for (int gnm_id = 1; gnm_id <= n_fns; ++gnm_id) {
+                uint64_t key_gnm =
+                    ((uint64_t)gnm_id << (64 - h->pre)) | key;
+
+                khint_t k_gnm = pg_ht_get(g, key_gnm);
+
+                if (k_gnm == kh_end(g))
+                    continue;
+
+                uint32_t v = kh_val(g, k_gnm);
+
+                m->mat[(2 * idx + 0) * n_fns + (gnm_id - 1)] =
+                    val_count1(v);
+
+                m->mat[(2 * idx + 1) * n_fns + (gnm_id - 1)] =
+                    val_count2(v);
+            }
+
+            ++idx;
+        }
+    }
+
+    pg_mht_destroy(h_copy);
+
+    return m;
+}
+
+void pg_mtx_dump(const char *fn, const pg_mht_t *h, const char **fns, const pg_mtx_t *m)
+{
+    FILE *fp;
+
+    if ((fp = strcmp(fn, "-") ? fopen(fn, "w") : stdout) == 0)
+        return;
+
+    fprintf(fp, "kmer\tSNP");
+
+    for (int j = 0; j < m->n_cols; ++j)
+        fprintf(fp, "\t%s", fns[j]);
+
+    fprintf(fp, "\n");
+
+    uint64_t hash_mask =
+        (1ULL << ((h->k - 1) * 2)) - 1;
+
+    char seq[h->k + 1];
+    int mid = h->k >> 1;
+
+    for (int s = 0; s < m->n_rows/2; ++s) {
+
+        uint64_t flanks =
+            pg_hash64_inv(m->snps[s].flanks << h->pre,
+                          hash_mask);
+
+        for (int j = 0; j < mid; ++j)
+            seq[h->k - 1 - j] =
+                nt4_seq_table[(flanks >> (j * 2)) & 3];
+
+        for (int j = 0; j < mid; ++j)
+            seq[mid - 1 - j] =
+                nt4_seq_table[(flanks >> ((mid + j) * 2)) & 3];
+
+        seq[h->k] = '\0';
+		
+        seq[mid] = nt4_seq_table[m->snps[s].cb1];
+
+        fprintf(fp, "%s\t%c/%c",
+                seq,
+                nt4_seq_table[m->snps[s].cb1],
+                nt4_seq_table[m->snps[s].cb2]);
+
+        for (int j = 0; j < m->n_cols; ++j)
+            fprintf(fp, "\t%llu",
+                    (unsigned long long)
+                    m->mat[(2 * s + 0) * m->n_cols + j]);
+
+        fprintf(fp, "\n");
+
+        seq[mid] = nt4_seq_table[m->snps[s].cb2];
+
+        fprintf(fp, "%s\t%c/%c",
+                seq,
+                nt4_seq_table[m->snps[s].cb1],
+                nt4_seq_table[m->snps[s].cb2]);
+
+        for (int j = 0; j < m->n_cols; ++j)
+            fprintf(fp, "\t%llu",
+                    (unsigned long long)
+                    m->mat[(2 * s + 1) * m->n_cols + j]);
+
+        fprintf(fp, "\n");
+    }
+
+    fclose(fp);
 }

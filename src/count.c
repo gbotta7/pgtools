@@ -13,7 +13,7 @@ KSEQ_INIT(gzFile, gzread)
 
 typedef struct {
 	int n, m;
-	uint64_t n_ins;
+	int n_ins;
 	ch_seq_t *a;
 } ch_buf_t;
 
@@ -36,6 +36,7 @@ typedef struct { 			// per-file data for each kt_pipeline() instance
     kseq_t *ks; 			// file-specific sequence reader
     const char *fn;
 	int f_threads; 			// number of threads for processing fn
+	int gnm_id;
 } pldat_t;
 
 typedef struct { 			// data structure for each step in kt_pipeline()
@@ -88,7 +89,11 @@ static void worker_for(void *data, long i, int tid) // callback for kt_for()
 	stepdat_t *s = (stepdat_t*)data;
 	ch_buf_t *b = &s->buf[i];
 	pg_mht_t *h = s->p->f->h;
-	b->n_ins += pg_mht_insert_list(h, b->n, b->a, s->p->f->filt);
+
+	if (s->p->f->filt)
+		pg_mht_insert_list(h, b->n, b->a, s->p->gnm_id);
+	else
+		b->n_ins += pg_mht_insert_list(h, b->n, b->a, 0);
 }
 
 
@@ -142,7 +147,7 @@ static void *worker_pipeline(void *data, int step, void *in) // callback for kt_
 			n_ins += s->buf[i].n_ins;
 			free(s->buf[i].a);
 		}
-		__sync_fetch_and_add(&p->f->h->counts, n_ins); // multiple I/O threads that update the number of k-mers
+		__sync_fetch_and_add(&p->f->h->n_ins_tot, n_ins); // multiple I/O threads that update the number of k-mers
 
 		free(s->buf); free(s);
 	}
@@ -159,12 +164,13 @@ static void *file_worker(void *data)
 
 		pthread_mutex_lock(&fd->mutex);
 		// grab next genome index
-        int i = fd->next++; // i = next, then next gets updated
+        int i = fd->next++;
 		if (i >= fd->n_fns) {
 			pthread_mutex_unlock(&fd->mutex);
 			break;  // all genomes have been processed, exit thread
 		}
         pl->fn = fd->fns[i];
+		pl->gnm_id = i + 1; // assign a genome ID and keep it fixed (next and done in filedat_t mutate)
 
 		if (fd->opt->verbose)
 			fprintf(stderr, "[M::%s] Processing '%s'\n", __func__, pl->fn);
@@ -187,41 +193,44 @@ static void *file_worker(void *data)
 		pthread_mutex_lock(&fd->mutex);
 		fd->done++;
 		if (fd->opt->verbose)
-			fprintf(stderr, "[M::%s] %d genomes done, %ld distinct k-mers in the hash table\n", __func__, fd->done, (long)fd->h->counts);
-		int do_filt = 0;
-		if (fd->opt->min_freq < 1.0) { // if min_freq is 1, only filter at the end
-			int t = (1.0 - fd->opt->min_freq) * fd->n_fns;
-			do_filt = (fd->done > t && !fd->filt);
-		}
+			fprintf(stderr, "[M::%s] %d genomes done, %ld distinct k-mers in the hash table\n", __func__, fd->done, (long)fd->h->n_ins_tot);
+		// int do_filt = 0;
+		// if (fd->opt->min_freq < 1.0) { // if min_freq is 1, only filter at the end
+		// 	int t = (1.0 - fd->opt->min_freq) * fd->n_fns;
+		// 	do_filt = (fd->done > t && !fd->filt);
+		// }
 		pthread_mutex_unlock(&fd->mutex);
 
-		// filter low frequency k-mers every n files processed (based on min_freq)
-		if (do_filt) {
-			pthread_rwlock_wrlock(&fd->rwlock);
-			if (!fd->filt) {
-				fprintf(stderr, "[M::%s] Filtering k-mers with frequency < %.2f (after processing %d files)\n", __func__, fd->opt->min_freq, fd->done);
-				int n_del = pg_mht_filter(fd->h, fd->done, fd->n_fns, fd->opt->min_freq, 0);
-				fprintf(stderr, "[M::%s] Filtered %d k-mer entries\n", __func__, n_del);
-				fd->filt = 1; // set the flag to indicate that filtering has been done
-			}
-			pthread_rwlock_unlock(&fd->rwlock);
-		}
+		// // filter low frequency k-mers every n files processed (based on min_freq)
+		// if (do_filt) {
+		// 	pthread_rwlock_wrlock(&fd->rwlock);
+		// 	if (!fd->filt) {
+		// 		fprintf(stderr, "[M::%s] Filtering k-mers with frequency < %.2f (after processing %d files)\n", __func__, fd->opt->min_freq, fd->done);
+		// 		int n_del = pg_mht_filter(fd->h, fd->done, fd->n_fns, fd->opt->min_freq);
+		// 		fprintf(stderr, "[M::%s] Filtered %d k-mer entries\n", __func__, n_del);
+		// 		fd->filt = 1; // set the flag to indicate that filtering has been done
+		// 	}
+		// 	pthread_rwlock_unlock(&fd->rwlock);
+		// }
 	}
 	
     pthread_exit(0);
 }
 
 
-pg_mht_t *pg_count(const char **fns, int n_fns, const pg_opt_t *opt)
+pg_mht_t *pg_count(const char **fns, int n_fns, const pg_opt_t *opt, int filt, pg_mht_t *h_init)
 {
     filedat_t fd;
     fd.fns = fns;
     fd.n_fns = n_fns;
     fd.opt = opt;
-    fd.h = pg_mht_init(opt->k, opt->pre);
+	if (h_init)
+		fd.h = h_init;
+	else
+		fd.h = pg_mht_init(opt->k, opt->pre);
 	fd.next = 0;
 	fd.done = 0;
-	fd.filt = 0;
+	fd.filt = filt;
 	// split threads among input files as evenly as possible
 	fd.batch_threads = (int*)calloc(n_fns, sizeof(int));
 	fd.n_batch = assign_threads(opt->n_threads, n_fns, fd.batch_threads);
