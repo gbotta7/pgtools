@@ -141,7 +141,7 @@ static void *worker_pipeline(void *data, int step, void *in) // callback for kt_
 	} else if (step == 2) { // step 3: insert k-mers to hash table
 		stepdat_t *s = (stepdat_t*)in;
 		int i, n = 1<<p->f->opt->pre;
-		uint64_t n_ins = 0;
+		int n_ins = 0;
 		kt_for(p->f_threads-2, worker_for, s, n);
 		for (i = 0; i < n; ++i) {
 			n_ins += s->buf[i].n_ins;
