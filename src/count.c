@@ -193,7 +193,7 @@ static void *file_worker(void *data)
 		pthread_mutex_lock(&fd->mutex);
 		fd->done++;
 		if (fd->opt->verbose)
-			fprintf(stderr, "[M::%s] %d genomes done, %ld distinct k-mers in the hash table\n", __func__, fd->done, (long)fd->h->n_ins_tot);
+			fprintf(stderr, "[M::%s] %d genomes done, %d distinct k-mers in the hash table\n", __func__, fd->done, fd->h->n_ins_tot);
 		// int do_filt = 0;
 		// if (fd->opt->min_freq < 1.0) { // if min_freq is 1, only filter at the end
 		// 	int t = (1.0 - fd->opt->min_freq) * fd->n_fns;

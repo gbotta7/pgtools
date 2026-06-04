@@ -14,7 +14,7 @@ mtb_md <- read.csv(mtb_md_path, sep="\t")
 
 mtb_snps_path <- ifelse(filt, "/hlilab/gianfranco/pgtools/results/mtb_asm_spec_filt.tsv", "/hlilab/gianfranco/pgtools/results/mtb_asm_spec.tsv")
 mtb_snps <- read.csv(mtb_snps_path, sep="\t", check.names = FALSE)
-colnames(mtb_snps)[4:ncol(mtb_snps)] <- sub("^.*asm/(.*)\\.fa\\.gz$", "\\1", colnames(mtb_snps)[4:ncol(mtb_snps)])
+colnames(mtb_snps)[4:ncol(mtb_snps)] <- sub("^.*files/(.*)\\.fa\\.gz$", "\\1", colnames(mtb_snps)[4:ncol(mtb_snps)])
 
 # Remove reference
 mtb_snps <- mtb_snps %>% dplyr::select(-H37Rv)
