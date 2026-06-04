@@ -2,7 +2,11 @@
 data/
 results/
 logs/
-test/
+test/*
+
+# But keep Python and R files in test/
+!test/*.py
+!test/*.R
 
 # Build artifacts
 src/*.o
