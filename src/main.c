@@ -47,7 +47,7 @@ int main_count(int argc, char *argv[])
 	h = pg_count(argv + o.ind, argc - o.ind, &opt);
 
 	// second step: count SNPmers in each file
-	csr = pg_findsnp(argv + o.ind, argc - o.ind, h->n_ins_tot-h->n_del_tot, &opt, h);
+	csr = pg_findsnp(argv + o.ind, argc - o.ind, h->n_ins_tot, &opt, h);
 		
 	// if (fn_out) pg_mht_dump(h, fn_out);
 	if (fn_out) pg_csr_dump(fn_out, h, argv + o.ind, csr);

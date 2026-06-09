@@ -18,15 +18,25 @@ typedef struct {
 } ch_buf_t;
 
 typedef struct {
+	pthread_mutex_t mutex;
+	pg_id_map_t *id_maps;
+	pg_csr_t *csr;
+	const char **fns;
+	int n_done;
+	int n_fns;
+} filedat_t;
+
+typedef struct {
+	filedat_t *f;
     const pg_opt_t *opt;
     kseq_t *ks; 			// file-specific sequence reader
 	const char *fn;
     pg_mht_t *h;
-	pg_id_map_t *id_maps;
-	pg_csr_t *csr;
-	int n_fns;
-	int n_snps;
+	// int n_fns;
+	// int n_snps;
+	int filt;				// whether the intermediate k-mer filtering has been done for the first time
 	int snp;				// whether it is the kmer pass or the snpmer pass
+	int f_threads;
 } pldat_t;
 
 typedef struct { 			// data structure for each step in kt_pipeline()
@@ -82,7 +92,7 @@ static void worker_for(void *data, long i, int tid) // callback for kt_for()
 	if (s->p->snp)
 		pg_mht_count_list(h, b->n, b->a);
 	else
-		b->n_ins += pg_mht_insert_list(h, b->n, b->a);
+		b->n_ins += pg_mht_insert_list(h, b->n, b->a, s->p->filt);
 }
 
 static void clear_for(void *data, long i, int tid) // callback for kt_for()
@@ -139,7 +149,8 @@ static void *worker_pipeline(void *data, int step, void *in) // callback for kt_
 		stepdat_t *s = (stepdat_t*)in;
 		int i, n = 1<<p->opt->pre;
 		int n_ins = 0;
-		kt_for(p->opt->n_threads-2, worker_for, s, n);
+		int f_threads = p->snp ? p->f_threads : p->opt->n_threads-2;
+		kt_for(f_threads, worker_for, s, n);
 		for (i = 0; i < n; ++i) {
 			n_ins += s->buf[i].n_ins;
 			free(s->buf[i].a);
@@ -156,7 +167,9 @@ pg_mht_t *pg_count(const char **fns, const int n_fns, const pg_opt_t *opt)
 	pldat_t pl;
 	pl.h = pg_mht_init(opt->k, opt->pre);
 	pl.opt = opt;
+	pl.filt = 0;
 	pl.snp = 0; // kmer pass
+	pl.h->n_del_tot = 0;
 	const char *fn;
 
 	for (int i = 0; i < n_fns; ++i) {
@@ -181,6 +194,20 @@ pg_mht_t *pg_count(const char **fns, const int n_fns, const pg_opt_t *opt)
 		// update number of processed files and filter k-mers if needed
 		pl.h->n_done++;
 
+		int check_fr = (int)round(n_fns * (1.0 - opt->min_freq)) + 1;
+		if (!(pl.h->n_done % check_fr) && pl.h->n_done < n_fns) {
+			if (opt->verbose) {
+				fprintf(stderr, "[M::%s] Filtering k-mers\n", __func__);
+			}
+			int64_t n_del = pg_mht_filter(pl.h, pl.h->n_done, n_fns, pl.opt->min_freq, 0);
+			pl.h->n_del_tot += n_del;
+			pl.h->n_ins_tot -= n_del;
+			pl.filt = 1;
+			if (opt->verbose) {
+				fprintf(stderr, "[M::%s] Filtered %ld k-mer entries\n", __func__, n_del);
+			}
+		}
+
 		if (opt->verbose) {
 			fprintf(stderr, "[M::%s] Processed %d genomes\n", __func__, pl.h->n_done);
 			fprintf(stderr, "[M::%s] Current number of k-mer entries in the hash table: %ld\n", __func__, pl.h->n_ins_tot);
@@ -189,8 +216,12 @@ pg_mht_t *pg_count(const char **fns, const int n_fns, const pg_opt_t *opt)
 
 	if (n_fns > 1) {
 		fprintf(stderr, "[M::%s] Final filtering to get SNP-mers\n", __func__);
-		pl.h->n_del_tot = pg_mht_filter(pl.h, n_fns, n_fns, pl.opt->min_freq); // filter to keep only SNP-mers
-		fprintf(stderr, "[M::%s] Filtered %ld k-mer entries\n", __func__, pl.h->n_del_tot);
+		int64_t n_del = pg_mht_filter(pl.h, n_fns, n_fns, pl.opt->min_freq, 1); // filter to keep only SNP-mers
+		pl.h->n_del_tot += n_del;
+		pl.h->n_ins_tot -= n_del;
+		if (opt->verbose) {
+			fprintf(stderr, "[M::%s] Filtered %ld k-mer entries\n", __func__, n_del);
+		}
 	}
 
 	pg_mht_tighten(pl.h);
@@ -205,59 +236,84 @@ static void rearrange_for(void *data, long i, int tid) // callback for kt_for()
 	pg_mht_rearrange(h, i);
 }
 
-pg_csr_t *pg_findsnp(const char **fns, const int n_fns, int n_snps, const pg_opt_t *opt, pg_mht_t *h)
-{	
-	pldat_t *pl = calloc(1, sizeof(pldat_t));
-	pl->h = h;
-	pl->opt = opt;
-	pl->snp = 1; // snpmer pass
-	pl->n_fns = n_fns;
-	pl->n_snps = n_snps;
-	const char *fn;
 
-	pl->h->n_done = 0; // re-initialize number of processed files
+static void *worker_file(void *data)
+{
+    pldat_t *pl = (pldat_t*)data;
+	filedat_t *fd = pl->f; // alias for convenience (not to use pl->f every time)
 
-	// shift bits
-	kt_for(pl->opt->n_threads, rearrange_for, pl->h, 1 << pl->opt->pre);
+	while (1) { // cannot use n_fns because different threads are concurrently updating the number of processed genomes
+        pthread_mutex_lock(&fd->mutex);
+		// grab next genome index
+        int i = fd->n_done++;
+		if (i >= fd->n_fns) {
+			pthread_mutex_unlock(&fd->mutex);;
+			break;  // all genomes have been processed, exit thread
+		}
+		if (pl->opt->verbose) {
+			fprintf(stderr, "[M::%s] Counted SNPs in %d genomes\n", __func__, fd->n_done);
+		}
+        pthread_mutex_unlock(&fd->mutex);
 
-	// index hash table to later convert it to sparse matrix
-	pg_id_map_t *maps = pg_mht_idx(pl->h);
-	pl->id_maps = maps;
-
-	// init sparse matrix and store snpmers
-	pl->csr = pg_csr_init(pl->n_snps, pl->n_fns, pl->h, pl->id_maps);
-
-	for (int i = 0; i < n_fns; ++i) {
-		fn = fns[i];
-		if (opt->verbose)
-			fprintf(stderr, "[M::%s] Counting SNPs in '%s'\n", __func__, fn);
-
-		gzFile fp;
-		fp = fn == 0 || strcmp(fn, "-") == 0? gzdopen(0, "r") : gzopen(fn, "r");
-		if (fp == 0) return 0;
-		pl->ks = kseq_init(fp);
-		pl->fn = fn;
-
-		kt_pipeline(3, worker_pipeline, pl, 3);
-
-		kseq_destroy(pl->ks);
-		gzclose(fp);
+        pl->fn = fd->fns[i];
+        gzFile fp = gzopen(pl->fn, "r");
+        if (fp == 0) {
+            fprintf(stderr, "[E::%s] failed to open '%s'\n", __func__, pl->fn);
+            continue;
+        }
+        pl->ks = kseq_init(fp);
+        kt_pipeline(3, worker_pipeline, pl, 3);
+        kseq_destroy(pl->ks);
+        gzclose(fp);
 
 		// store counts to sparse matrix
-		pg_csr_insert(pl->csr, pl->h, pl->id_maps, i);
+		pthread_mutex_lock(&fd->mutex);
+		pg_csr_insert(fd->csr, pl->h, fd->id_maps, i);
+		pthread_mutex_unlock(&fd->mutex);
 
-		// reset counters for the next round of counting (if any)
-		kt_for(pl->opt->n_threads, clear_for, pl, 1 << pl->opt->pre);
+		kt_for(pl->f_threads, clear_for, pl, 1 << pl->opt->pre); // clear mht in this thread
+    }
+	
+    pthread_exit(0);
+}
 
-		// update number of processed files and filter k-mers if needed
-		pl->h->n_done++;
 
-		if (opt->verbose) {
-			fprintf(stderr, "[M::%s] Counted SNPs in %d genomes\n", __func__, pl->h->n_done);
-		}
+pg_csr_t *pg_findsnp(const char **fns, const int n_fns, int n_snps, const pg_opt_t *opt, pg_mht_t *h)
+{	
+	filedat_t fd;
+	fd.id_maps = pg_mht_idx(h); // index hash table to later convert it to sparse matrix
+	fd.csr = pg_csr_init(n_snps, n_fns, h, fd.id_maps); // init sparse matrix and store snpmers
+	fd.fns = fns;
+	fd.n_fns = n_fns;
+	fd.n_done = 0;
+	pthread_mutex_init(&fd.mutex, 0);
+	// shift bits of the hash table values to count SNPs
+	kt_for(opt->n_threads, rearrange_for, h, 1 << opt->pre);
+
+	// count SNPmers in each genome in parallel
+	int *batch_threads = (int*)calloc(n_fns, sizeof(int));
+	int n_batch = assign_threads(opt->n_threads, n_fns, batch_threads);
+
+	pthread_t *tid = (pthread_t*)calloc(n_batch, sizeof(pthread_t));
+	pldat_t *pl  = (pldat_t*)calloc(n_batch, sizeof(pldat_t));
+	for (int i = 0; i < n_batch; ++i) {
+		pl[i].f = &fd;
+		pl[i].f_threads = batch_threads[i];
+		pl[i].h = pg_mht_copy(h);
+		pl[i].opt = opt;
+		pl[i].snp = 1; // snpmer pass
+		pthread_create(&tid[i], 0, worker_file, &pl[i]);
 	}
+	for (int i = 0; i < n_batch; ++i) {
+		pthread_join(tid[i], 0);
+		pg_mht_destroy(pl[i].h);
+	}
+
+    free(tid); free(pl); free(batch_threads);
+
+	pthread_mutex_destroy(&fd.mutex);
 
 	h = pl->h; // update for main
 
-    return pl->csr;
+    return fd.csr;
 }

@@ -159,3 +159,29 @@ void kt_pipeline(int n_threads, void *(*func)(void*, int, void*), void *shared_d
 }
 
 
+// Assign threads to genomes as evenly as possible.
+int assign_threads(int n_threads, int n_fns, int *out) {
+    int best_batch = 1;
+
+	if (n_threads > 4*n_fns) {
+		best_batch = n_fns;
+	}
+	else {
+		for (int b = 1; b <= n_fns; ++b) {
+			int base = n_threads / b;
+			// each genome gets base or base+1 — check bounds
+			int hi = base + (n_threads % b > 0 ? 1 : 0);
+			int lo = base;
+			if (lo < 3) break;   // below minimum, no point trying more genomes
+			if (hi > 4) continue; // would exceed cap, skip this batch size
+			best_batch = b;
+		}
+	}
+
+    int base = n_threads / best_batch;
+    int rem  = n_threads % best_batch;
+    for (int i = 0; i < best_batch; ++i)
+        out[i] = base + (i < rem ? 1 : 0);
+
+	return best_batch;
+}

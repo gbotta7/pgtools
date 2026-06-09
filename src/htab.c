@@ -26,6 +26,55 @@ pg_mht_t *pg_mht_init(int k, int pre)
 	return h;
 }
 
+// pg_ht_t *pg_ht_copy(const pg_ht_t *src) {
+//     if (!src) return NULL;
+//     pg_ht_t *dst = (pg_ht_t*)kcalloc(1, sizeof(pg_ht_t));
+//     dst->bits  = src->bits;
+//     dst->count = src->count;
+//     khint_t n_buckets = kh_capacity(src);
+//     if (n_buckets) {
+//         // copy used flags
+//         size_t flag_size = __kh_fsize(n_buckets) * sizeof(khint32_t);
+//         dst->used = (khint32_t*)kmalloc(flag_size);
+//         memcpy(dst->used, src->used, flag_size);
+//         // copy keys+vals (bucket array)
+//         dst->keys = kmalloc(n_buckets * sizeof(*src->keys));
+//         memcpy(dst->keys, src->keys, n_buckets * sizeof(*src->keys));
+//     }
+//     return dst;
+// }
+
+pg_ht_t *pg_ht_copy(const pg_ht_t *src) {
+    if (!src) return NULL;
+    pg_ht_t *dst = (pg_ht_t*)kcalloc(1, sizeof(pg_ht_t));
+    dst->bits  = src->bits;
+    dst->count = src->count;
+    khint_t n_buckets = kh_capacity(src);
+    if (n_buckets) {
+        size_t flag_size = __kh_fsize(n_buckets) * sizeof(khint32_t);
+        dst->used = (khint32_t*)kmalloc(flag_size);
+        memcpy(dst->used, src->used, flag_size);
+        size_t bucket_size = n_buckets * sizeof(pg_ht_t_m_bucket_t);
+        dst->keys = kmalloc(bucket_size);
+        memcpy(dst->keys, src->keys, bucket_size);
+    }
+    return dst;
+}
+
+pg_mht_t *pg_mht_copy(const pg_mht_t *src) {
+    pg_mht_t *dst = (pg_mht_t*)calloc(1, sizeof(pg_mht_t));
+    dst->k = src->k;
+    dst->pre = src->pre;
+    dst->n_ins_tot = src->n_ins_tot;
+    dst->n_del_tot = src->n_del_tot;
+    dst->n_done = src->n_done;
+    int n = 1 << src->pre;
+    dst->h = (pg_ht1_t*)calloc(n, sizeof(pg_ht1_t));
+    for (int i = 0; i < n; ++i)
+        dst->h[i].h = pg_ht_copy(src->h[i].h);
+    return dst;
+}
+
 void pg_mht_destroy(pg_mht_t *h)
 {
 	int i;
@@ -36,7 +85,7 @@ void pg_mht_destroy(pg_mht_t *h)
 	free(h->h); free(h);
 }
 
-int64_t pg_mht_filter(pg_mht_t *h, int n_proc, int n_tot, double min_freq)
+int64_t pg_mht_filter(pg_mht_t *h, int n_proc, int n_tot, double min_freq, int ff)
 {	
 	int64_t n_del = 0;
     int i, n = 1 << h->pre;
@@ -51,13 +100,12 @@ int64_t pg_mht_filter(pg_mht_t *h, int n_proc, int n_tot, double min_freq)
         for (k = 0; k < kh_end(g->h); ++k) {
 			if (!kh_exist(g->h, k)) continue;
 			uint32_t v = kh_val(g->h, k);
-			// if (ff) { // final filter
-			// 	cond = (double)(n_proc - (val_pgnm_count1(v) + val_pgnm_count2(v))) / n_tot > (1.0 - min_freq) || (!val_snp1(v) || val_snp2(v));
-			// } else {
-			// 	cond = (double)(n_proc - (val_pgnm_count1(v) + val_pgnm_count2(v))) / n_tot > (1.0 - min_freq);
-			// }
+			if (ff) { // final filter
+				cond = (double)(n_proc - (k_val_pgnm_count1(v) + k_val_pgnm_count2(v))) / n_tot > (1.0 - min_freq + 1e-9) || (!k_val_snp1(v) || k_val_snp2(v));
+			} else {
+				cond = (double)(n_proc - (k_val_pgnm_count1(v) + k_val_pgnm_count2(v))) / n_tot > (1.0 - min_freq + 1e-9);
+			}
 
-			cond = (double)(n_proc - (k_val_pgnm_count1(v) + k_val_pgnm_count2(v))) / n_tot > (1.0 - min_freq) || (!k_val_snp1(v) || k_val_snp2(v));
 			if (cond) {
 				del_part[n_del_part++] = kh_key(g->h, k);
 			}
@@ -77,7 +125,7 @@ int64_t pg_mht_filter(pg_mht_t *h, int n_proc, int n_tot, double min_freq)
 	return n_del;
 }
 
-int64_t pg_mht_insert_list(pg_mht_t *h, int n, const ch_seq_t *a)
+int64_t pg_mht_insert_list(pg_mht_t *h, int n, const ch_seq_t *a, int f)
 {
 	int j, mask = (1<<h->pre) - 1;
 	int64_t n_ins = 0;
@@ -95,7 +143,14 @@ int64_t pg_mht_insert_list(pg_mht_t *h, int n, const ch_seq_t *a)
 		key = (a[j].h_flanks >> h->pre);
 		
 		// k-mers pass
-		khint_t k = pg_ht_put(g->h, key, &absent);
+		khint_t k;
+		if (!f) {
+			k = pg_ht_put(g->h, key, &absent);
+		} else {
+			k = pg_ht_get(g->h, key);
+			if (k == kh_end(g->h)) continue; // k-mer not found until now, skip
+			absent = 0;
+		}
 		if (absent) { // first occurrence, SNP unknown
 			++n_ins;
 			gnm_cnt1 = 1; gnm_cnt2 = 0; snp1 = 0; snp2 = 0; cb1 = cb; cb2 = 0; pgnm_cnt1 = 0; pgnm_cnt2 = 0;
@@ -225,7 +280,7 @@ void pg_mht_count_list(pg_mht_t *h, int n, const ch_seq_t *a)
 {
 	int j, mask = (1<<h->pre) - 1;
 	pg_ht1_t *g;
-	if (n == 0) return 0;
+	if (n == 0) return;
 
 	uint32_t cnt1, cnt2, cb1, cb2, snp1, snp2, v;
 
@@ -240,8 +295,8 @@ void pg_mht_count_list(pg_mht_t *h, int n, const ch_seq_t *a)
 		// snp-mers pass
 		khint_t k = pg_ht_get(g->h, key);
 		if (k == kh_end(g->h)) continue; // not a SNP-mer, skip
-		v = kh_val(g->h, k);
 
+		v = kh_val(g->h, k);
 		cnt1 = s_val_count1(v);
 		cnt2 = s_val_count2(v);
 		cb1 = s_val_cb1(v);

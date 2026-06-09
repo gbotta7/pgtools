@@ -62,12 +62,12 @@ typedef struct {
 } pg_ht1_t;
 
 typedef struct {
-    pg_ht1_t *h; // array of partitions (size = 1 << pre).
-    int64_t n_ins_tot; // stores the total k-mer insertions in pangenome.
-    int64_t n_del_tot; // stores the total filtered k-mers in the filter stage
-    int n_done; // number of processed files
-    int32_t k; // k-mers length.
-    int32_t pre; // stores the k-mer flanking sequences, encoded as 2 bits per base (used for partitioning).
+    pg_ht1_t *h;            // array of partitions (size = 1 << pre).
+    int64_t n_ins_tot;      // stores the total k-mer insertions in pangenome.
+    int64_t n_del_tot;      // stores the total filtered k-mers in the filter stage
+    int n_done;             // number of processed files
+    int32_t k;              // k-mers length.
+    int32_t pre;            // stores the k-mer flanking sequences, encoded as 2 bits per base (used for partitioning).
 } pg_mht_t;
 
 typedef struct {
@@ -92,6 +92,7 @@ typedef struct __attribute__((packed)) {
 } pg_entry_t;
 
 typedef struct {
+    pthread_mutex_t mutex;  // mutex to count SNPmers in multiple genomes concurrently (when pldat_t has snp=1)
     pg_entry_t *entries;
     pg_snp_t *snpmer;
     int64_t n, m;
@@ -106,12 +107,13 @@ typedef struct {
 
 
 pg_mht_t *pg_mht_init(int k, int pre);
+pg_mht_t *pg_mht_copy(const pg_mht_t *src);
 void pg_mht_destroy(pg_mht_t *h);
-int64_t pg_mht_insert_list(pg_mht_t *h, int n, const ch_seq_t *a);
+int64_t pg_mht_insert_list(pg_mht_t *h, int n, const ch_seq_t *a, int f);
 void pg_mht_count_list(pg_mht_t *h, int n, const ch_seq_t *a);
 void pg_mht_clear_k(pg_mht_t *h, long i);
 void pg_mht_clear_s(pg_mht_t *h, long i);
-int64_t pg_mht_filter(pg_mht_t *h, int n_proc, int n_tot, double min_freq);
+int64_t pg_mht_filter(pg_mht_t *h, int n_proc, int n_tot, double min_freq, int ff);
 void pg_mht_tighten(pg_mht_t *h);
 void pg_mht_rearrange(pg_mht_t *h, long i);
 // void pg_mht_dump(const pg_mht_t *h, const char *fn);
