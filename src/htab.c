@@ -26,24 +26,6 @@ pg_mht_t *pg_mht_init(int k, int pre)
 	return h;
 }
 
-// pg_ht_t *pg_ht_copy(const pg_ht_t *src) {
-//     if (!src) return NULL;
-//     pg_ht_t *dst = (pg_ht_t*)kcalloc(1, sizeof(pg_ht_t));
-//     dst->bits  = src->bits;
-//     dst->count = src->count;
-//     khint_t n_buckets = kh_capacity(src);
-//     if (n_buckets) {
-//         // copy used flags
-//         size_t flag_size = __kh_fsize(n_buckets) * sizeof(khint32_t);
-//         dst->used = (khint32_t*)kmalloc(flag_size);
-//         memcpy(dst->used, src->used, flag_size);
-//         // copy keys+vals (bucket array)
-//         dst->keys = kmalloc(n_buckets * sizeof(*src->keys));
-//         memcpy(dst->keys, src->keys, n_buckets * sizeof(*src->keys));
-//     }
-//     return dst;
-// }
-
 pg_ht_t *pg_ht_copy(const pg_ht_t *src) {
     if (!src) return NULL;
     pg_ht_t *dst = (pg_ht_t*)kcalloc(1, sizeof(pg_ht_t));
@@ -101,7 +83,7 @@ int64_t pg_mht_filter(pg_mht_t *h, int n_proc, int n_tot, double min_freq, int f
 			if (!kh_exist(g->h, k)) continue;
 			uint32_t v = kh_val(g->h, k);
 			if (ff) { // final filter
-				cond = (double)(n_proc - (k_val_pgnm_count1(v) + k_val_pgnm_count2(v))) / n_tot > (1.0 - min_freq + 1e-9) || (!k_val_snp1(v) || k_val_snp2(v));
+				cond = (double)(n_proc - (k_val_pgnm_count1(v) + k_val_pgnm_count2(v))) / n_tot > (1.0 - min_freq + 1e-9) || (!k_val_snp1(v) || k_val_snp2(v) || k_val_filt(v));
 			} else {
 				cond = (double)(n_proc - (k_val_pgnm_count1(v) + k_val_pgnm_count2(v))) / n_tot > (1.0 - min_freq + 1e-9);
 			}
@@ -132,7 +114,7 @@ int64_t pg_mht_insert_list(pg_mht_t *h, int n, const ch_seq_t *a, int f)
 	pg_ht1_t *g;
 	if (n == 0) return 0;
 
-	uint32_t gnm_cnt1, gnm_cnt2, cb1, cb2, snp1, snp2, pgnm_cnt1, pgnm_cnt2, v;
+	uint32_t gnm_cnt1, gnm_cnt2, cb1, cb2, snp1, snp2, pgnm_cnt1, pgnm_cnt2, filter, v;
 
 	g = &h->h[a[0].h_flanks & mask]; // get hash table partition for the first (and all) k-mers.
 	
@@ -153,8 +135,8 @@ int64_t pg_mht_insert_list(pg_mht_t *h, int n, const ch_seq_t *a, int f)
 		}
 		if (absent) { // first occurrence, SNP unknown
 			++n_ins;
-			gnm_cnt1 = 1; gnm_cnt2 = 0; snp1 = 0; snp2 = 0; cb1 = cb; cb2 = 0; pgnm_cnt1 = 0; pgnm_cnt2 = 0;
-			kh_val(g->h, k) = k_val_pack(gnm_cnt2, gnm_cnt1, snp2, snp1, cb2, cb1, pgnm_cnt2, pgnm_cnt1);
+			gnm_cnt1 = 1; gnm_cnt2 = 0; filter = 0; snp1 = 0; snp2 = 0; cb1 = cb; cb2 = 0; pgnm_cnt1 = 0; pgnm_cnt2 = 0;
+			kh_val(g->h, k) = k_val_pack(gnm_cnt2, gnm_cnt1, filter, snp2, snp1, cb2, cb1, pgnm_cnt2, pgnm_cnt1);
 		} else {
 			v = kh_val(g->h, k);
 			gnm_cnt1 = k_val_gnm_count1(v);
@@ -163,8 +145,10 @@ int64_t pg_mht_insert_list(pg_mht_t *h, int n, const ch_seq_t *a, int f)
 			cb2 = k_val_cb2(v);
 			snp1 = k_val_snp1(v);
 			snp2 = k_val_snp2(v);
+			filter = k_val_filt(v);
 			pgnm_cnt1 = k_val_pgnm_count1(v);
 			pgnm_cnt2 = k_val_pgnm_count2(v);
+
 			if (snp1 ^ snp2) { // already known as SNP, check if it is multi-allelic
 				snp1 = 1;
 				if (cb != cb1 && cb != cb2) {
@@ -207,7 +191,7 @@ int64_t pg_mht_insert_list(pg_mht_t *h, int n, const ch_seq_t *a, int f)
 				}
 			}
 
-			kh_val(g->h, k) = k_val_pack(gnm_cnt2, gnm_cnt1, snp2, snp1, cb2, cb1, pgnm_cnt2, pgnm_cnt1);
+			kh_val(g->h, k) = k_val_pack(gnm_cnt2, gnm_cnt1, filter, snp2, snp1, cb2, cb1, pgnm_cnt2, pgnm_cnt1);
 		}
 	}
 	
@@ -215,7 +199,7 @@ int64_t pg_mht_insert_list(pg_mht_t *h, int n, const ch_seq_t *a, int f)
 }
 
 
-void pg_mht_clear_k(pg_mht_t *h, long i)
+void pg_mht_clear_k(pg_mht_t *h, long i, int f)
 {
 	// store entries to delete
 	pg_ht1_t *g = &h->h[i];
@@ -223,12 +207,39 @@ void pg_mht_clear_k(pg_mht_t *h, long i)
 	for (k = 0; k < kh_end(g->h); ++k) {
 		if (!kh_exist(g->h, k)) continue;
 		uint32_t v = kh_val(g->h, k);
-		if (k_val_gnm_count1(v) == 1 && k_val_gnm_count2(v) == 0) {
-			kh_val(g->h, k) = k_val_pack(0, 0, k_val_snp2(v), k_val_snp1(v), k_val_cb2(v), k_val_cb1(v), k_val_pgnm_count2(v), k_val_pgnm_count1(v)+1);
-		} else if (k_val_gnm_count1(v) == 0 && k_val_gnm_count2(v) == 1) {
-			kh_val(g->h, k) = k_val_pack(0, 0, k_val_snp2(v), k_val_snp1(v), k_val_cb2(v), k_val_cb1(v), k_val_pgnm_count2(v)+1, k_val_pgnm_count1(v));
-		} else {
-			kh_val(g->h, k) = k_val_pack(0, 0, k_val_snp2(v), k_val_snp1(v), k_val_cb2(v), k_val_cb1(v), k_val_pgnm_count2(v), k_val_pgnm_count1(v));
+		uint32_t gnm_cnt1 = k_val_gnm_count1(v);
+		uint32_t gnm_cnt2 = k_val_gnm_count2(v);
+		// filters list
+		if (f == 0) { // the mildest filter, keep everything that has counts larger than 0
+			if (gnm_cnt1 > 0) {
+				kh_val(g->h, k) = k_val_pack(0, 0, k_val_filt(v), k_val_snp2(v), k_val_snp1(v), k_val_cb2(v), k_val_cb1(v), k_val_pgnm_count2(v), k_val_pgnm_count1(v) + 1);
+			}
+			if (gnm_cnt2 > 0) {
+				kh_val(g->h, k) = k_val_pack(0, 0, k_val_filt(v), k_val_snp2(v), k_val_snp1(v), k_val_cb2(v), k_val_cb1(v), k_val_pgnm_count2(v) + 1, k_val_pgnm_count1(v));
+			}
+			if (gnm_cnt1 == 0 && gnm_cnt2 == 0) {
+				kh_val(g->h, k) = k_val_pack(0, 0, k_val_filt(v), k_val_snp2(v), k_val_snp1(v), k_val_cb2(v), k_val_cb1(v), k_val_pgnm_count2(v), k_val_pgnm_count1(v));
+			}
+		} else if (f == 1) {
+			if (gnm_cnt1 > 0 && gnm_cnt2 > 0) {
+				kh_val(g->h, k) = k_val_pack(0, 0, 1, k_val_snp2(v), k_val_snp1(v), k_val_cb2(v), k_val_cb1(v), k_val_pgnm_count2(v), k_val_pgnm_count1(v)); // set filt=1 so it gets deleted in the final filter
+			} else if (gnm_cnt1 > 0 && gnm_cnt2 == 0) {
+				kh_val(g->h, k) = k_val_pack(0, 0, k_val_filt(v), k_val_snp2(v), k_val_snp1(v), k_val_cb2(v), k_val_cb1(v), k_val_pgnm_count2(v), k_val_pgnm_count1(v) + 1);
+			} else if (gnm_cnt1 == 0 && gnm_cnt2 > 0) {
+				kh_val(g->h, k) = k_val_pack(0, 0, k_val_filt(v), k_val_snp2(v), k_val_snp1(v), k_val_cb2(v), k_val_cb1(v), k_val_pgnm_count2(v) + 1, k_val_pgnm_count1(v));
+			} else {
+				kh_val(g->h, k) = k_val_pack(0, 0, k_val_filt(v), k_val_snp2(v), k_val_snp1(v), k_val_cb2(v), k_val_cb1(v), k_val_pgnm_count2(v), k_val_pgnm_count1(v));
+			}
+		} else if (f == 2) { // the strictest filter, keeps only unikmers
+			if (k_val_gnm_count1(v) == 1 && k_val_gnm_count2(v) == 0) {
+				kh_val(g->h, k) = k_val_pack(0, 0, k_val_filt(v), k_val_snp2(v), k_val_snp1(v), k_val_cb2(v), k_val_cb1(v), k_val_pgnm_count2(v), k_val_pgnm_count1(v) + 1);
+			} else if (k_val_gnm_count1(v) == 0 && k_val_gnm_count2(v) == 1) {
+				kh_val(g->h, k) = k_val_pack(0, 0, k_val_filt(v), k_val_snp2(v), k_val_snp1(v), k_val_cb2(v), k_val_cb1(v), k_val_pgnm_count2(v) + 1, k_val_pgnm_count1(v));
+			} else if (k_val_gnm_count1(v) == 0 && k_val_gnm_count2(v) == 0) {
+				kh_val(g->h, k) = k_val_pack(0, 0, k_val_filt(v), k_val_snp2(v), k_val_snp1(v), k_val_cb2(v), k_val_cb1(v), k_val_pgnm_count2(v), k_val_pgnm_count1(v));
+			} else {
+				kh_val(g->h, k) = k_val_pack(0, 0, 1, k_val_snp2(v), k_val_snp1(v), k_val_cb2(v), k_val_cb1(v), k_val_pgnm_count2(v), k_val_pgnm_count1(v)); // set filt=1 so it gets deleted in the final filter
+			}
 		}
 	}
 }
@@ -270,6 +281,8 @@ void pg_mht_rearrange(pg_mht_t *h, long i)
 		uint32_t cb2 = k_val_cb2(v);
 		uint32_t snp1 = k_val_snp1(v);
 		uint32_t snp2 = k_val_snp2(v);
+
+		if (cb1 == cb2) fprintf(stderr, "Bonjour, error here\n");
 
 		kh_val(g->h, k) = s_val_pack(0, 0, snp2, snp1, cb2, cb1);
 	}

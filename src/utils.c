@@ -34,6 +34,7 @@ void pg_opt_init(pg_opt_t *o)
 	o->k = 31;
 	o->min_freq = 0.95;
 	o->pre = 10;
+	o->filt_type = 2;
 	o->n_threads = 4;
 	o->chunk_size = mm_parse_num("1.9g");
 	o->verbose = 0;

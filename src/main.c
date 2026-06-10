@@ -15,10 +15,11 @@ int main_count(int argc, char *argv[])
 	pg_opt_t opt;
 	ketopt_t o = KETOPT_INIT;
 	pg_opt_init(&opt);
-	while ((c = ketopt(&o, argc, argv, 1, "k:m:p:K:t:o:v", 0)) >= 0) {
+	while ((c = ketopt(&o, argc, argv, 1, "k:m:p:f:K:t:o:v", 0)) >= 0) {
 		if (c == 'k') opt.k = atoi(o.arg);
 		else if (c == 'm') opt.min_freq = atof(o.arg);
 		else if (c == 'p') opt.pre = atoi(o.arg);
+		else if (c == 'f') opt.filt_type = atoi(o.arg);
 		else if (c == 'K') opt.chunk_size = mm_parse_num(o.arg);
 		else if (c == 't') opt.n_threads = atoi(o.arg);
 		else if (c == 'v') opt.verbose = 1;
@@ -31,6 +32,7 @@ int main_count(int argc, char *argv[])
 		fprintf(stderr, "  -k INT     k-mer size [%d]\n", opt.k);
 		fprintf(stderr, "  -m FLOAT   minimum frequency of k-mers across inputs to be kept [%g]\n", opt.min_freq);
 		fprintf(stderr, "  -p INT     prefix length [%d]\n", opt.pre);
+		fprintf(stderr, "  -f INT	  filter type [%d]\n", opt.filt_type);
 		fprintf(stderr, "  -t INT     number of worker threads [%d]\n", opt.n_threads);
 		fprintf(stderr, "  -K INT     chunk size [1.9g]\n");
 		fprintf(stderr, "  -v         verbose output\n");

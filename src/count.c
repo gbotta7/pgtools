@@ -1,3 +1,4 @@
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -32,8 +33,6 @@ typedef struct {
     kseq_t *ks; 			// file-specific sequence reader
 	const char *fn;
     pg_mht_t *h;
-	// int n_fns;
-	// int n_snps;
 	int filt;				// whether the intermediate k-mer filtering has been done for the first time
 	int snp;				// whether it is the kmer pass or the snpmer pass
 	int f_threads;
@@ -101,7 +100,7 @@ static void clear_for(void *data, long i, int tid) // callback for kt_for()
 	if (p->snp)
 		pg_mht_clear_s(p->h, i);
 	else
-		pg_mht_clear_k(p->h, i);
+		pg_mht_clear_k(p->h, i, p->opt->filt_type);
 }
 
 static void *worker_pipeline(void *data, int step, void *in) // callback for kt_pipeline()
@@ -280,6 +279,9 @@ static void *worker_file(void *data)
 
 pg_csr_t *pg_findsnp(const char **fns, const int n_fns, int n_snps, const pg_opt_t *opt, pg_mht_t *h)
 {	
+	// shift bits of the hash table values to count SNPs
+	kt_for(opt->n_threads, rearrange_for, h, 1 << opt->pre);
+	
 	filedat_t fd;
 	fd.id_maps = pg_mht_idx(h); // index hash table to later convert it to sparse matrix
 	fd.csr = pg_csr_init(n_snps, n_fns, h, fd.id_maps); // init sparse matrix and store snpmers
@@ -287,8 +289,6 @@ pg_csr_t *pg_findsnp(const char **fns, const int n_fns, int n_snps, const pg_opt
 	fd.n_fns = n_fns;
 	fd.n_done = 0;
 	pthread_mutex_init(&fd.mutex, 0);
-	// shift bits of the hash table values to count SNPs
-	kt_for(opt->n_threads, rearrange_for, h, 1 << opt->pre);
 
 	// count SNPmers in each genome in parallel
 	int *batch_threads = (int*)calloc(n_fns, sizeof(int));

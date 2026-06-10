@@ -8,13 +8,14 @@
 #define PG_MAGIC "PGKM"
 
 // define the kmer hash table value
-#define K_VAL_INFO_BITS 6
+#define K_VAL_INFO_BITS 8
 #define K_PGNM_COUNTER_BITS 20
 #define K_GNM_COUNTER_BITS (32 - (K_VAL_INFO_BITS + K_PGNM_COUNTER_BITS))
 #define K_COUNTER_MAX ((1U << K_GNM_COUNTER_BITS/2) - 1)
 
 #define k_val_gnm_count2(v) ((v) >> ((K_VAL_INFO_BITS + K_PGNM_COUNTER_BITS) + K_GNM_COUNTER_BITS/2))
 #define k_val_gnm_count1(v) (((v) >> (K_VAL_INFO_BITS + K_PGNM_COUNTER_BITS)) & ((1U << K_GNM_COUNTER_BITS/2) - 1))
+#define k_val_filt(v) (((v) >> (6 + K_PGNM_COUNTER_BITS)) & 0x1U)
 #define k_val_snp2(v) (((v) >> (5 + K_PGNM_COUNTER_BITS)) & 0x1U)
 #define k_val_snp1(v) (((v) >> (4 + K_PGNM_COUNTER_BITS)) & 0x1U)
 #define k_val_cb2(v) (((v) >> (2 + K_PGNM_COUNTER_BITS)) & 0x3U)
@@ -22,7 +23,7 @@
 #define k_val_pgnm_count2(v) (((v) >> (K_PGNM_COUNTER_BITS/2)) & ((1U << K_PGNM_COUNTER_BITS/2) - 1)) 
 #define k_val_pgnm_count1(v) ((v) & ((1U << K_PGNM_COUNTER_BITS/2) - 1))
 
-#define k_val_pack(cnt2, cnt1, snp2, snp1, cb2, cb1, pgnm_cnt2, pgnm_cnt1) (((cnt2) << (K_VAL_INFO_BITS + K_PGNM_COUNTER_BITS + K_GNM_COUNTER_BITS/2))| ((cnt1) << (K_VAL_INFO_BITS + K_PGNM_COUNTER_BITS)) | ((snp2) << (K_PGNM_COUNTER_BITS + 5)) | ((snp1) << (K_PGNM_COUNTER_BITS + 4)) | ((cb2) << (K_PGNM_COUNTER_BITS + 2)) | ((cb1) << K_PGNM_COUNTER_BITS) | ((pgnm_cnt2) << (K_PGNM_COUNTER_BITS/2)) | (pgnm_cnt1))
+#define k_val_pack(cnt2, cnt1, filt, snp2, snp1, cb2, cb1, pgnm_cnt2, pgnm_cnt1) (((cnt2) << (K_VAL_INFO_BITS + K_PGNM_COUNTER_BITS + K_GNM_COUNTER_BITS/2))| ((cnt1) << (K_VAL_INFO_BITS + K_PGNM_COUNTER_BITS)) | ((filt) << (K_PGNM_COUNTER_BITS + 6)) | ((snp2) << (K_PGNM_COUNTER_BITS + 5)) | ((snp1) << (K_PGNM_COUNTER_BITS + 4)) | ((cb2) << (K_PGNM_COUNTER_BITS + 2)) | ((cb1) << K_PGNM_COUNTER_BITS) | ((pgnm_cnt2) << (K_PGNM_COUNTER_BITS/2)) | (pgnm_cnt1))
 
 // define the snpmer hash table value
 #define S_VAL_INFO_BITS 6
@@ -52,6 +53,7 @@ typedef struct { // terminal options
     double min_freq;
 	int32_t k;
     int32_t pre; // number of bits for partitioning.
+    int filt_type;
     int verbose;
 } pg_opt_t;
 
@@ -111,7 +113,7 @@ pg_mht_t *pg_mht_copy(const pg_mht_t *src);
 void pg_mht_destroy(pg_mht_t *h);
 int64_t pg_mht_insert_list(pg_mht_t *h, int n, const ch_seq_t *a, int f);
 void pg_mht_count_list(pg_mht_t *h, int n, const ch_seq_t *a);
-void pg_mht_clear_k(pg_mht_t *h, long i);
+void pg_mht_clear_k(pg_mht_t *h, long i, int f);
 void pg_mht_clear_s(pg_mht_t *h, long i);
 int64_t pg_mht_filter(pg_mht_t *h, int n_proc, int n_tot, double min_freq, int ff);
 void pg_mht_tighten(pg_mht_t *h);
