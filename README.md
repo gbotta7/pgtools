@@ -1,4 +1,4 @@
-# User's guide
+## User's guide
 
 **pgtools** is a fast, multi-threaded C toolkit for pangenome SNP-mer analysis. Given a set of genome assemblies (FASTA files), it identifies *SNP-mers* — k-mers whose central base varies across genomes — and builds a compact sparse matrix recording how often each SNP-mer allele appears in each genome.
 Typical use cases can be:
