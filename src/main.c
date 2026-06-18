@@ -67,8 +67,8 @@ double *main_count(int argc, char *argv[])
 		fprintf(stderr, "  -o FILE   output genome-specific SNPs in VCF format\n");
 		return 1;
 	}
-	if (opt.k >= 32) {
-		fprintf(stderr, "ERROR: -k must be <=31\n");
+	if (opt.k >= 32 || !(opt.k % 2)) {
+		fprintf(stderr, "ERROR: -k must be odd and <=31\n");
 		return 1;
 	}
 

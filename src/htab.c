@@ -10,6 +10,7 @@
 #include "utils.h"
 
 KHASHL_MAP_INIT(, pg_ht_t, pg_ht, uint64_t, uint32_t, kh_hash_uint64, kh_eq_generic)
+KHASHL_SET_INIT(, strset_t, strset, const char *, kh_hash_str, kh_eq_str)
 
 // Operations on hash tables and bloom filter.
 
@@ -410,11 +411,30 @@ void write_vcf(const char *out_fn, pg_mht_t *h, const paf_rec_t *recs, int n_snp
 
     // VCF header
     fprintf(fp,
-        "##fileformat=VCFv4.2\n"
-        "##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n"
-		"##FORMAT=<ID=KC,Number=2,Type=Integer,Description=\"K-mer counts for REF and ALT alleles\">\n"
-        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t%s\n",
-        gnm_fn);
+		"##fileformat=VCFv4.2\n"
+		"##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n"
+		"##FORMAT=<ID=KC,Number=2,Type=Integer,Description=\"K-mer counts for REF and ALT alleles\">\n");
+
+	// collect unique contigs with a hash table
+	strset_t *seen = strset_init();
+	for (int i = 0; i < n_snps; i++) {
+		int absent;
+		strset_put(seen, recs[i].chrom_name, &absent);
+		if (absent)
+			fprintf(fp, "##contig=<ID=%s>\n", recs[i].chrom_name);
+	}
+	strset_destroy(seen);
+
+	// strip path and extension from gnm_fn for sample name
+	const char *bname = strrchr(gnm_fn, '/');
+	bname = bname ? bname + 1 : gnm_fn;
+	char sample_name[256];
+	strncpy(sample_name, bname, sizeof(sample_name) - 1);
+	sample_name[sizeof(sample_name) - 1] = '\0';
+	char *dot = strrchr(sample_name, '.');
+	if (dot) *dot = '\0';
+
+	fprintf(fp, "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t%s\n", sample_name);
 
 	// VCF content
     int snp_idx = 0; // tracks position in paf_rec array
@@ -444,7 +464,7 @@ void write_vcf(const char *out_fn, pg_mht_t *h, const paf_rec_t *recs, int n_snp
             else gt = "1/1";
 
             fprintf(fp,
-				"%s\t%ld\t.\t%c\t%c\t.\t.\t.\tGT:KC\t%s:%u/%u\n",
+				"%s\t%ld\t.\t%c\t%c\t.\t.\t.\tGT:KC\t%s:%u,%u\n",
 				rec->chrom_name,
 				rec->target_pos,
 				ref, alt,
