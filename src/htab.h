@@ -5,6 +5,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#include "parser.h"
+
 #define PG_MAGIC "PGKM"
 
 // define the kmer hash table value
@@ -72,40 +74,10 @@ typedef struct {
     int32_t pre;            // stores the k-mer flanking sequences, encoded as 2 bits per base (used for partitioning).
 } pg_mht_t;
 
-typedef struct {
-    uint64_t flanks;   // hashed flanks (without genome ID bits)
-    uint8_t cb1;
-    uint8_t cb2;
-} pg_snp_t;
-
 // typedef struct {
-//     int n_rows;
-//     int n_cols;
-
-//     pg_snp_t *snps;    // length n_snps
-//     uint64_t *mat;     // dimensions: (2*n_snps) x n_genomes
-// } pg_mtx_t;
-
-typedef struct __attribute__((packed)) {
-    uint32_t row_id;
-    uint16_t col_id;
-    uint16_t cnt1;
-    uint16_t cnt2;
-} pg_entry_t;
-
-typedef struct {
-    pthread_mutex_t mutex;  // mutex to count SNPmers in multiple genomes concurrently (when pldat_t has snp=1)
-    pg_entry_t *entries;
-    pg_snp_t *snpmer;
-    int64_t n, m;
-    uint32_t n_snps;
-    uint32_t n_fns;
-} pg_csr_t;
-
-typedef struct {
-    uint32_t *ids;
-    uint32_t  n;
-} pg_id_map_t;
+//     uint32_t *ids;
+//     uint32_t  n;
+// } pg_id_map_t;
 
 
 pg_mht_t *pg_mht_init(int k, int pre);
@@ -117,15 +89,14 @@ void pg_mht_clear_k(pg_mht_t *h, long i, int f);
 void pg_mht_clear_s(pg_mht_t *h, long i);
 int64_t pg_mht_filter(pg_mht_t *h, int n_proc, int n_tot, double min_freq, int ff);
 void pg_mht_tighten(pg_mht_t *h);
+void pg_dump_snps(const char *fn, pg_mht_t *h);
+
 void pg_mht_rearrange(pg_mht_t *h, long i);
-// void pg_mht_dump(const pg_mht_t *h, const char *fn);
-pg_id_map_t *pg_mht_idx(pg_mht_t *h);
+// pg_id_map_t *pg_mht_idx(pg_mht_t *h);
+void write_vcf(const char *out_fn, pg_mht_t *h, const paf_rec_t *recs, int n_snps, char *gnm_fn);
+void merge_vcfs(const char *out_fn, const char *tmpdir, int n_fns, int n_snps);
 
-pg_csr_t *pg_csr_init(int n_snps, int n_fns, pg_mht_t *h, pg_id_map_t *id_maps);
-void pg_csr_insert(pg_csr_t *csr, pg_mht_t *h, pg_id_map_t *id_maps, int gnm_id);
-void pg_csr_dump(const char *fn, const pg_opt_t *opt, const char **fns, const pg_csr_t *csr);
-
-pg_mht_t *pg_count(const char **fns, const int n_fns, const pg_opt_t *opt);
-pg_csr_t *pg_findsnp(const char **fns, const int n_fns, int n_snps, const pg_opt_t *opt, pg_mht_t *h);
+pg_mht_t *pg_count(const char **fns, const int n_fns, const pg_opt_t *opt, const char *out);
+void pg_findsnp(const char **fns, const int n_fns, int64_t n_snps, const pg_opt_t *opt, pg_mht_t *h, const char *paf_fn, const char *out_fn);
 
 #endif // HTAB_H

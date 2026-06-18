@@ -40,6 +40,25 @@ void pg_opt_init(pg_opt_t *o)
 	o->verbose = 0;
 }
 
+char *find_cli_tool(const char *tool) {
+    char cmd[256];
+    snprintf(cmd, sizeof(cmd), "bash -l -c 'which %s'", tool);
+
+    FILE *fp = popen(cmd, "r");
+    if (!fp) return NULL;
+
+    char *path = malloc(1024);
+    if (!fgets(path, 1024, fp)) {
+        free(path);
+        pclose(fp);
+        return NULL;
+    }
+    pclose(fp);
+
+    path[strcspn(path, "\n")] = '\0';
+    return path;
+}
+
 int64_t mm_parse_num(const char *str)
 {
     double x;

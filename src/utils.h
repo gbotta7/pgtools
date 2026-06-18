@@ -55,6 +55,7 @@ static inline uint64_t pg_hash64_inv(uint64_t key, uint64_t mask)
 	return key;
 }
 
+char *find_cli_tool(const char *tool);
 int64_t mm_parse_num(const char *str);
 void pg_opt_init(pg_opt_t *o);
 

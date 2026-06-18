@@ -2,10 +2,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
 #include "parser.h"
 #include "kseq.h"
+
+
 KSEQ_INIT(gzFile, gzread)
 
+
+// FASTA/FASTQ parser
 struct bseq_file_s {
 	gzFile fp;
 	kseq_t *ks;
@@ -55,4 +60,28 @@ bseq1_t *bseq_read(bseq_file_t *fp, int64_t chunk_size, int keep_comment, int *n
 	}
 	*n_ = n;
 	return seqs;
+}
+
+
+// PAF parser
+paf_rec_t *parse_paf(const char *fn, int n_snps, int32_t k)
+{
+    paf_rec_t *recs = malloc(n_snps * sizeof(paf_rec_t));
+
+    FILE *fp = fopen(fn, "r");
+
+    char line[LINE_BUF_SIZE];
+    int i = 0;
+    for (int i = 0; i < n_snps && fgets(line, sizeof(line), fp); i++) {
+		char chrom[MAX_NAME_LEN];
+		long pos;
+		if (sscanf(line, "%*s\t%*s\t%*s\t%*s\t%*s\t%s\t%*s\t%ld", chrom, &pos) == 2) {
+			strncpy(recs[i].chrom_name, chrom, MAX_NAME_LEN - 1);
+			recs[i].chrom_name[MAX_NAME_LEN - 1] = '\0';
+			recs[i].target_pos = pos + ((k >> 1) + 1);
+		}
+	}
+
+    fclose(fp);
+    return recs;
 }

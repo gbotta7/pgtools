@@ -4,10 +4,12 @@
 #include <string.h>
 #include <zlib.h>
 #include <pthread.h>
+#include <unistd.h>
 
 #include "kseq.h"
 #include "kthread.h"
 #include "htab.h"
+#include "parser.h"
 #include "utils.h"
 
 KSEQ_INIT(gzFile, gzread)
@@ -20,11 +22,12 @@ typedef struct {
 
 typedef struct {
 	pthread_mutex_t mutex;
-	pg_id_map_t *id_maps;
-	pg_csr_t *csr;
+	paf_rec_t *recs;
+	const char *tmpdir;
 	const char **fns;
 	int n_done;
 	int n_fns;
+	int n_snps;
 } filedat_t;
 
 typedef struct {
@@ -50,7 +53,6 @@ static inline void ch_insert_buf(ch_buf_t *buf, int p, int k, uint64_t flanks, u
 {
 	int pre = flanks & ((1<<p) - 1);
 	ch_buf_t *b = &buf[pre];
-	// fprintf(stderr, "[M::%s] b.m = %d, b.n = %d, flanks = %lu, center = %lu, pre = %d\n", __func__, b->m, b->n, (unsigned long)flanks, (unsigned long)center, pre);
 	if (b->n == b->m) {
 		b->m = b->m < 8? 8 : b->m + (b->m>>1);
 		REALLOC(b->a, b->m);
@@ -161,7 +163,7 @@ static void *worker_pipeline(void *data, int step, void *in) // callback for kt_
 	return 0;
 }
 
-pg_mht_t *pg_count(const char **fns, const int n_fns, const pg_opt_t *opt)
+pg_mht_t *pg_count(const char **fns, const int n_fns, const pg_opt_t *opt, const char *out)
 {	
 	pldat_t pl;
 	pl.h = pg_mht_init(opt->k, opt->pre);
@@ -225,6 +227,8 @@ pg_mht_t *pg_count(const char **fns, const int n_fns, const pg_opt_t *opt)
 
 	pg_mht_tighten(pl.h);
 
+	pg_dump_snps(out, pl.h);
+
     return pl.h;
 }
 
@@ -265,10 +269,11 @@ static void *worker_file(void *data)
         kseq_destroy(pl->ks);
         gzclose(fp);
 
-		// store counts to sparse matrix
-		pthread_mutex_lock(&fd->mutex);
-		pg_csr_insert(fd->csr, pl->h, fd->id_maps, i);
-		pthread_mutex_unlock(&fd->mutex);
+		// store this genome's counts to its own file (no mutex: own file)
+		char gnm_path[4096];
+		snprintf(gnm_path, sizeof gnm_path, "%s/gnm.%d.vcf", fd->tmpdir, i);
+
+		write_vcf(gnm_path, pl->h, fd->recs, fd->n_snps, pl->fn);
 
 		kt_for(pl->f_threads, clear_for, pl, 1 << pl->opt->pre); // clear mht in this thread
     }
@@ -277,18 +282,27 @@ static void *worker_file(void *data)
 }
 
 
-pg_csr_t *pg_findsnp(const char **fns, const int n_fns, int n_snps, const pg_opt_t *opt, pg_mht_t *h)
+void pg_findsnp(const char **fns, const int n_fns, int64_t n_snps, const pg_opt_t *opt, pg_mht_t *h, const char *paf_fn, const char *out_fn)
 {	
 	// shift bits of the hash table values to count SNPs
 	kt_for(opt->n_threads, rearrange_for, h, 1 << opt->pre);
 
 	filedat_t fd;
-	fd.id_maps = pg_mht_idx(h); // index hash table to later convert it to sparse matrix
-	fd.csr = pg_csr_init(n_snps, n_fns, h, fd.id_maps); // init sparse matrix and store snpmers
+	fd.recs = parse_paf(paf_fn, n_snps, h->k);
 	fd.fns = fns;
+	fd.n_snps = n_snps;
 	fd.n_fns = n_fns;
 	fd.n_done = 0;
 	pthread_mutex_init(&fd.mutex, 0);
+
+	// create a temp directory for the per-genome count files
+	char tmpdir[1024];
+	snprintf(tmpdir, sizeof tmpdir, "%s.snptmp.XXXXXX", strcmp(out_fn, "-") ? out_fn : "pg");
+	if (mkdtemp(tmpdir) == 0) {
+		fprintf(stderr, "[E::%s] failed to create temp dir\n", __func__);
+		return;
+	}
+	fd.tmpdir = tmpdir;
 
 	// count SNPmers in each genome in parallel
 	int *batch_threads = (int*)calloc(n_fns, sizeof(int));
@@ -309,10 +323,23 @@ pg_csr_t *pg_findsnp(const char **fns, const int n_fns, int n_snps, const pg_opt
 		pg_mht_destroy(pl[i].h);
 	}
 
-	h = pl->h; // update for main
     free(tid); free(pl); free(batch_threads);
 
 	pthread_mutex_destroy(&fd.mutex);
 
-    return fd.csr;
+	// merge the per-genome files (opened in FD-safe batches) into the matrix
+	if (opt->verbose)
+		fprintf(stderr, "[M::%s] Merging %d per-genome files into '%s'\n", __func__, n_fns, out_fn);
+
+	merge_vcfs(out_fn, tmpdir, n_fns, n_snps);
+
+	// clean up per-genome VCFs
+	for (int i = 0; i < n_fns; ++i) {
+		char p[4096];
+		snprintf(p, sizeof p, "%s/gnm.%d.vcf", tmpdir, i);
+		remove(p);
+	}
+	remove(tmpdir);
+
+	pg_mht_destroy(h);
 }

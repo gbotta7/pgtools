@@ -31,8 +31,8 @@ depend:
 # DO NOT DELETE
 
 main.o:    main.c    htab.h utils.h ketopt.h sys.h
-count.o:   count.c   htab.h utils.h kseq.h kthread.h
-htab.o:    htab.c    htab.h utils.h khashl.h
+count.o:   count.c   htab.h utils.h kseq.h kthread.h parser.h
+htab.o:    htab.c    htab.h utils.h khashl.h parser.h
 kthread.o: kthread.c kthread.h
 parser.o:  parser.c  parser.h kseq.h
 sys.o:     sys.c     sys.h

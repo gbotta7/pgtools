@@ -1,7 +1,9 @@
+#include <math.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "htab.h"
 #include "khashl.h" // hash table
@@ -73,7 +75,7 @@ int64_t pg_mht_filter(pg_mht_t *h, int n_proc, int n_tot, double min_freq, int f
     int i, n = 1 << h->pre;
 	int cond;
 
-    for (i = 0; i < n; ++i) {
+	for (i = 0; i < n; ++i) {
 		// store entries to delete
         pg_ht1_t *g = &h->h[i];
 		uint64_t *del_part = malloc(kh_size(g->h) * sizeof(uint64_t));
@@ -282,8 +284,6 @@ void pg_mht_rearrange(pg_mht_t *h, long i)
 		uint32_t snp1 = k_val_snp1(v);
 		uint32_t snp2 = k_val_snp2(v);
 
-		if (cb1 == cb2) fprintf(stderr, "Bonjour, error here\n");
-
 		kh_val(g->h, k) = s_val_pack(0, 0, snp2, snp1, cb2, cb1);
 	}
 }
@@ -362,142 +362,197 @@ void pg_mht_count_list(pg_mht_t *h, int n, const ch_seq_t *a)
 	}
 }
 
-pg_id_map_t *pg_mht_idx(pg_mht_t *h)
-{
-	pg_id_map_t *id_maps = calloc(1<<h->pre, sizeof(pg_id_map_t));
-	uint32_t n_snps = 0;
-
-	for (int i = 0; i < 1<<h->pre; ++i) {
-		pg_ht1_t *g = &h->h[i];
-		uint32_t cap = kh_capacity(g->h);
-		id_maps[i].n = cap;
-		id_maps[i].ids = malloc(cap * sizeof(uint32_t));
-		memset(id_maps[i].ids, 0xFF, cap * sizeof(uint32_t)); // UINT32_MAX = not a SNP
-		for (khint_t k = 0; k < kh_end(g->h); ++k) {
-			if (!kh_exist(g->h, k)) continue;
-			uint32_t v = kh_val(g->h, k);
-			id_maps[i].ids[k] = n_snps++;
-		}
-	}
-
-	return id_maps;
-}
-
-
-void pg_csr_insert(pg_csr_t *csr, pg_mht_t *h, pg_id_map_t *id_maps, int gnm_id)
-{	
-	for (int i = 0; i < 1<<h->pre; ++i) {
-		pg_ht1_t *g = &h->h[i];
-		for (khint_t k = 0; k < kh_end(g->h); ++k) {
-			if (!kh_exist(g->h, k)) continue;
-			// if (id_maps[i].ids[k] == UINT32_MAX) continue; // not a SNP-mer
-
-			uint32_t v = kh_val(g->h, k);
-			uint32_t cnt1 = s_val_count1(v);
-			uint32_t cnt2 = s_val_count2(v);
-			if (cnt1 == 0 && cnt2 == 0) continue; // not seen in this genome
-
-			if (csr->n == csr->m) {
-				csr->m = csr->m < 1024 ? 1024 : csr->m + (csr->m >> 1);
-				REALLOC(csr->entries, csr->m);
-			}
-			csr->entries[csr->n].row_id = id_maps[i].ids[k];
-			csr->entries[csr->n].col_id = gnm_id;
-			csr->entries[csr->n].cnt1 = cnt1 > M_COUNTER_MAX ? M_COUNTER_MAX : (uint16_t)cnt1;
-			csr->entries[csr->n].cnt2 = cnt2 > M_COUNTER_MAX ? M_COUNTER_MAX : (uint16_t)cnt2;
-			csr->n++;
-		}
-	}
-}
-
-pg_csr_t *pg_csr_init(int n_snps, int n_fns, pg_mht_t *h, pg_id_map_t *id_maps)
-{
-    pg_csr_t *csr;
-    CALLOC(csr, 1);
-    csr->n_snps = n_snps;
-    csr->n_fns  = n_fns;
-
-    // fill snpmer metadata once
-    csr->snpmer = calloc(n_snps, sizeof(pg_snp_t));
-    for (int i = 0; i < 1<<h->pre; ++i) {
-        pg_ht1_t *g = &h->h[i];
-        for (khint_t k = 0; k < kh_end(g->h); ++k) {
-            if (!kh_exist(g->h, k)) continue;
-            uint32_t id = id_maps[i].ids[k];
-            // if (id == UINT32_MAX) continue;
-            uint32_t v = kh_val(g->h, k);
-            csr->snpmer[id].cb1 = (uint8_t)s_val_cb1(v);
-            csr->snpmer[id].cb2 = (uint8_t)s_val_cb2(v);
-            csr->snpmer[id].flanks = kh_key(g->h, k);
-        }
-    }
-	return csr;
-}
-
-static int csr_entry_cmp(const void *a, const void *b) {
-    const pg_entry_t *ea = (const pg_entry_t *)a;
-    const pg_entry_t *eb = (const pg_entry_t *)b;
-    if (ea->row_id != eb->row_id) return (ea->row_id > eb->row_id) - (ea->row_id < eb->row_id);
-    return (ea->col_id > eb->col_id) - (ea->col_id < eb->col_id);
-}
-
-void pg_csr_dump(const char *fn, const pg_opt_t *opt, const char **fns, const pg_csr_t *csr)
-{
-    FILE *fp;
+void pg_dump_snps(const char *fn, pg_mht_t *h) {
+	FILE *fp;
     if ((fp = strcmp(fn, "-") ? fopen(fn, "w") : stdout) == 0)
         return;
 
-    fprintf(fp, "kmer\tSNP");
-    for (int j = 0; j < csr->n_fns; ++j)
-        fprintf(fp, "\t%s", fns[j]);
-    fprintf(fp, "\n");
+	uint64_t hash_mask = (1ULL << ((h->k - 1) * 2)) - 1;
+    uint64_t flanks;
+	uint32_t v, cb1, cb2;
+	char seq[h->k + 1];
+	int mid = h->k >> 1;
+	
+	for (int i = 0; i < 1<<h->pre; ++i) {
+        pg_ht1_t *g = &h->h[i];
+        for (khint_t k = 0; k < kh_end(g->h); ++k) {
+            if (!kh_exist(g->h, k)) continue;
+            flanks = pg_hash64_inv(((uint64_t)kh_key(g->h, k) << h->pre) | (uint64_t)i, hash_mask);
+			v = kh_val(g->h, k);
+			cb1 = k_val_cb1(v);
+			cb2 = k_val_cb2(v);
 
-    uint64_t hash_mask = (1ULL << ((opt->k - 1) * 2)) - 1;
-    char seq[opt->k + 1];
-    int mid = opt->k >> 1;
+			for (int j = 0; j < mid; ++j)
+				seq[h->k - 1 - j] = nt4_seq_table[(flanks >> (j * 2)) & 3];
+			for (int j = 0; j < mid; ++j)
+				seq[mid - 1 - j] = nt4_seq_table[(flanks >> ((mid + j) * 2)) & 3];
+			seq[h->k] = '\0';
 
-    uint16_t *row1 = calloc(csr->n_fns, sizeof(uint16_t));
-    uint16_t *row2 = calloc(csr->n_fns, sizeof(uint16_t));
+			seq[mid] = nt4_seq_table[cb1];
+			fprintf(fp, "%s\n", seq);
 
-    qsort(csr->entries, csr->n, sizeof(pg_entry_t), csr_entry_cmp);
+			seq[mid] = nt4_seq_table[cb2];
+			fprintf(fp, "%s\n", seq);
 
-    int64_t e = 0;
-    for (uint32_t s = 0; s < csr->n_snps; ++s) {
+		}
+	}	
+}
 
-        memset(row1, 0, csr->n_fns * sizeof(uint16_t));
-        memset(row2, 0, csr->n_fns * sizeof(uint16_t));
 
-        while (e < csr->n && csr->entries[e].row_id == s) {
-            uint16_t c = csr->entries[e].col_id;
-            row1[c] = csr->entries[e].cnt1;
-            row2[c] = csr->entries[e].cnt2;
-            e++;
-        }
-
-        uint64_t flanks = pg_hash64_inv(csr->snpmer[s].flanks << opt->pre, hash_mask);
-        for (int j = 0; j < mid; ++j)
-            seq[opt->k - 1 - j] = nt4_seq_table[(flanks >> (j * 2)) & 3];
-        for (int j = 0; j < mid; ++j)
-            seq[mid - 1 - j] = nt4_seq_table[(flanks >> ((mid + j) * 2)) & 3];
-        seq[opt->k] = '\0';
-
-        seq[mid] = nt4_seq_table[csr->snpmer[s].cb1];
-        fprintf(fp, "%s\t%c/%c", seq,
-                nt4_seq_table[csr->snpmer[s].cb1],
-                nt4_seq_table[csr->snpmer[s].cb2]);
-        for (int j = 0; j < csr->n_fns; ++j)
-            fprintf(fp, "\t%u", row1[j]);
-        fprintf(fp, "\n");
-
-        seq[mid] = nt4_seq_table[csr->snpmer[s].cb2];
-        fprintf(fp, "%s\t%c/%c", seq,
-                nt4_seq_table[csr->snpmer[s].cb1],
-                nt4_seq_table[csr->snpmer[s].cb2]);
-        for (int j = 0; j < csr->n_fns; ++j)
-            fprintf(fp, "\t%u", row2[j]);
-        fprintf(fp, "\n");
+// VCF writer
+void write_vcf(const char *out_fn, pg_mht_t *h, const paf_rec_t *recs, int n_snps, char *gnm_fn)
+{
+    FILE *fp = fopen(out_fn, "w");
+    if (!fp) {
+        fprintf(stderr, "[E::write_vcf] failed to open '%s'\n", out_fn);
+        return;
     }
 
-    free(row1); free(row2);
-    if (fp != stdout) fclose(fp);
+    // VCF header
+    fprintf(fp,
+        "##fileformat=VCFv4.2\n"
+        "##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n"
+		"##FORMAT=<ID=KC,Number=2,Type=Integer,Description=\"K-mer counts for REF and ALT alleles\">\n"
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t%s\n",
+        gnm_fn);
+
+	// VCF content
+    int snp_idx = 0; // tracks position in paf_rec array
+    for (int i = 0; i < 1<<h->pre; ++i) {
+        pg_ht1_t *g = &h->h[i];
+        khint_t k;
+
+        for (k = 0; k < kh_end(g->h); ++k) {
+            if (!kh_exist(g->h, k)) continue;
+
+            uint32_t v = kh_val(g->h, k);
+            uint32_t cb1 = s_val_cb1(v);
+            uint32_t cb2 = s_val_cb2(v);
+            uint32_t cnt1 = s_val_count1(v);
+            uint32_t cnt2 = s_val_count2(v);
+
+            const paf_rec_t *rec = &recs[snp_idx++];
+
+            char ref = nt4_seq_table[cb1];
+            char alt = nt4_seq_table[cb2];
+
+            // Simple GT: if cnt2 > 0 and cnt1 > 0 → het (0/1), else hom
+            const char *gt;
+            if (cnt1 == 0 && cnt2 > 0) gt = "0/1";
+            else if (cnt1 > 0 && cnt2 == 0) gt = "1/0";
+			else if (cnt1 == 0 && cnt2 == 0) gt = "0/0";
+            else gt = "1/1";
+
+            fprintf(fp,
+				"%s\t%ld\t.\t%c\t%c\t.\t.\t.\tGT:KC\t%s:%u/%u\n",
+				rec->chrom_name,
+				rec->target_pos,
+				ref, alt,
+				gt,
+				cnt1, cnt2);
+		}
+    }
+
+    fclose(fp);
+}
+
+
+void merge_vcfs(const char *out_fn, const char *tmpdir, int n_fns, int n_snps)
+{
+    FILE **fps = malloc(n_fns * sizeof(FILE*));
+    for (int i = 0; i < n_fns; ++i) {
+        char p[4096];
+        snprintf(p, sizeof p, "%s/gnm.%d.vcf", tmpdir, i);
+        fps[i] = fopen(p, "r");
+        if (!fps[i]) {
+            fprintf(stderr, "[E::merge_vcfs] failed to open '%s'\n", p);
+            // handle error
+        }
+    }
+
+    FILE *out = fopen(out_fn, "w");
+
+    // VCF header
+    char **sample_names = malloc(n_fns * sizeof(char*));
+    char line[4096];
+    for (int i = 0; i < n_fns; ++i) {
+        sample_names[i] = NULL;
+        while (fgets(line, sizeof line, fps[i])) {
+            if (strncmp(line, "#CHROM", 6) == 0) {
+                // extract sample name (last tab-separated token)
+                char *tok = strrchr(line, '\t');
+                if (tok) {
+                    tok++; // skip the tab
+                    // strip newline
+                    tok[strcspn(tok, "\n")] = '\0';
+                    sample_names[i] = strdup(tok);
+                }
+                break; // done with header for this file
+            }
+            // only write meta-lines from genome 0
+            if (i == 0 && line[0] == '#') {
+                fputs(line, out);
+            }
+        }
+    }
+
+    fprintf(out, "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT");
+    for (int i = 0; i < n_fns; ++i)
+        fprintf(out, "\t%s", sample_names[i] ? sample_names[i] : "UNKNOWN");
+    fprintf(out, "\n");
+
+	// VCF content
+    char **lines = malloc(n_fns * sizeof(char*));
+    for (int i = 0; i < n_fns; ++i)
+        lines[i] = malloc(4096);
+
+    for (int s = 0; s < n_snps; ++s) {
+        // read one line from each file
+        for (int i = 0; i < n_fns; ++i) {
+            if (!fgets(lines[i], 4096, fps[i])) {
+                fprintf(stderr, "[E::merge_vcfs] unexpected EOF in genome %d at SNP %d\n", i, s);
+            }
+            // strip newline
+            lines[i][strcspn(lines[i], "\n")] = '\0';
+        }
+
+        // we want everything up to and including FORMAT for the first file
+        char *p = lines[0];
+        int tab_count = 0;
+        char *sample_start = NULL;
+        for (char *c = p; *c; ++c) {
+            if (*c == '\t') {
+                ++tab_count;
+                if (tab_count == 9) { // after FORMAT field
+                    *c = '\0';
+                    sample_start = c + 1;
+                    break;
+                }
+            }
+        }
+        fprintf(out, "%s\t%s", p, sample_start); // fixed fields + sample 0
+
+        // append sample columns from following genomes
+        for (int i = 1; i < n_fns; ++i) {
+            // extract just the sample column (after the 9th tab)
+            char *sp = lines[i];
+            int tc = 0;
+            for (char *c = sp; *c; ++c) {
+                if (*c == '\t' && ++tc == 9) {
+                    fprintf(out, "\t%s", c + 1);
+                    break;
+                }
+            }
+        }
+        fprintf(out, "\n");
+    }
+
+    // cleanup
+    for (int i = 0; i < n_fns; ++i) {
+        fclose(fps[i]);
+        free(lines[i]);
+        free(sample_names[i]);
+    }
+    free(fps); free(lines); free(sample_names);
+    fclose(out);
 }
