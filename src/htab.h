@@ -45,8 +45,11 @@
 #define M_COUNTER_MAX ((1U << M_COUNTER_BITS) - 1)
 
 typedef struct __attribute__((packed)) {
+    char *seq_name;
 	uint64_t h_flanks;
+    int pos;
 	uint8_t cb; // stores central base of k-mer and SNP information
+    char strand;
 } ch_seq_t;
 
 typedef struct { // terminal options
@@ -59,25 +62,37 @@ typedef struct { // terminal options
     int verbose;
 } pg_opt_t;
 
-struct pg_ht_t; // see khashl.h and htab.c for the definition of pg_ht_t.
-
-typedef struct { 
-    struct pg_ht_t *h; // hash table for each bucket.
-} pg_ht1_t;
-
-typedef struct {
-    pg_ht1_t *h;            // array of partitions (size = 1 << pre).
-    int64_t n_ins_tot;      // stores the total k-mer insertions in pangenome.
-    int64_t n_del_tot;      // stores the total filtered k-mers in the filter stage
-    int n_done;             // number of processed files
-    int32_t k;              // k-mers length.
-    int32_t pre;            // stores the k-mer flanking sequences, encoded as 2 bits per base (used for partitioning).
-} pg_mht_t;
-
 // typedef struct {
 //     uint32_t *ids;
 //     uint32_t  n;
 // } pg_id_map_t;
+
+typedef struct {
+    char **seq_name;
+    int *pos;
+    char *strand;
+    int n;
+} kinfo_t;
+
+// struct pg_ht_t; // see khashl.h and htab.c for the definition of pg_ht_t.
+typedef struct { 
+    struct pg_ht_t *h; // hash table for each bucket.
+} pg_ht1_t;
+
+// struct pg_im_t; // see khashl.h and htab.c for the definition of pg_im_t.
+typedef struct { 
+    struct pg_im_t *m; // hash table for each bucket.
+} pg_im1_t;
+
+typedef struct {
+    pg_ht1_t *h;            // array of partitions (size = 1 << pre)
+    pg_im1_t *m;            // k-mers info
+    int64_t n_ins_tot;      // stores the total k-mer insertions in pangenome
+    int64_t n_del_tot;      // stores the total filtered k-mers in the filter stage
+    int n_done;             // number of processed files
+    int32_t k;              // k-mers length
+    int32_t pre;            // stores the k-mer flanking sequences, encoded as 2 bits per base (used for partitioning)
+} pg_mht_t;
 
 
 pg_mht_t *pg_mht_init(int k, int pre);
@@ -92,11 +107,11 @@ void pg_mht_tighten(pg_mht_t *h);
 void pg_dump_snps(const char *fn, pg_mht_t *h);
 
 void pg_mht_rearrange(pg_mht_t *h, long i);
-// pg_id_map_t *pg_mht_idx(pg_mht_t *h);
-void write_vcf(const char *out_fn, pg_mht_t *h, const paf_rec_t *recs, int n_snps, char *gnm_fn);
+// void *pg_mht_idx(pg_mht_t *h);
+void write_vcf(const char *out_fn, pg_mht_t *h, pg_mht_t *ref_h, char *gnm_fn);
 void merge_vcfs(const char *out_fn, const char *tmpdir, int n_fns, int n_snps);
 
 pg_mht_t *pg_count(const char **fns, const int n_fns, const pg_opt_t *opt, const char *out);
-void pg_findsnp(const char **fns, const int n_fns, int64_t n_snps, const pg_opt_t *opt, pg_mht_t *h, const char *paf_fn, const char *out_fn);
+void pg_findsnp(const char **fns, const int n_fns, int64_t n_snps, const pg_opt_t *opt, pg_mht_t *h, const char *ref_fn, const char *out_fn);
 
 #endif // HTAB_H
