@@ -45,12 +45,17 @@
 #define M_COUNTER_MAX ((1U << M_COUNTER_BITS) - 1)
 
 typedef struct __attribute__((packed)) {
-    char *seq_name;
 	uint64_t h_flanks;
+    int idx;    // index of the contig
     int pos;
 	uint8_t cb; // stores central base of k-mer and SNP information
     char strand;
-} ch_seq_t;
+} s_ch_seq_t;
+
+typedef struct __attribute__((packed)) {
+	uint64_t h_flanks;
+	uint8_t cb; // stores central base of k-mer and SNP information
+} k_ch_seq_t;
 
 typedef struct { // terminal options
     int64_t chunk_size;
@@ -67,24 +72,45 @@ typedef struct { // terminal options
 //     uint32_t  n;
 // } pg_id_map_t;
 
+// typedef struct {
+//     int *seq_idx;
+//     int *pos;
+//     char *strand;
+//     int n, m;
+// } kinfo_t;
+
 typedef struct {
-    char **seq_name;
-    int *pos;
-    char *strand;
-    int n;
+    int pos;
+    int seq_idx;
+    char strand;
+} kinfo_entry_t;
+
+typedef struct {
+    kinfo_entry_t *i;
+    int n, m;
 } kinfo_t;
 
-// struct pg_ht_t; // see khashl.h and htab.c for the definition of pg_ht_t.
+KHASHL_MAP_INIT(KH_LOCAL, pg_ht_t, pg_ht, uint64_t, uint32_t, kh_hash_uint64, kh_eq_generic)
+KHASHL_MAP_INIT(KH_LOCAL, pg_im_t, pg_im, uint64_t, kinfo_t, kh_hash_uint64, kh_eq_generic)
+
+// see khashl.h for the definition of pg_ht_t.
 typedef struct { 
-    struct pg_ht_t *h; // hash table for each bucket.
+    struct pg_ht_t *h; // count hash table for each bucket.
 } pg_ht1_t;
 
-// struct pg_im_t; // see khashl.h and htab.c for the definition of pg_im_t.
+// see khashl.h and htab.c for the definition of pg_im_t.
 typedef struct { 
-    struct pg_im_t *m; // hash table for each bucket.
+    struct pg_im_t *m; // info hash table for each bucket.
 } pg_im1_t;
 
 typedef struct {
+    char **names;   // interned contig name strings
+    int n;
+    int m;
+} cnames_t;
+
+typedef struct {
+    cnames_t cnames;        // contig names
     pg_ht1_t *h;            // array of partitions (size = 1 << pre)
     pg_im1_t *m;            // k-mers info
     int64_t n_ins_tot;      // stores the total k-mer insertions in pangenome
@@ -98,8 +124,8 @@ typedef struct {
 pg_mht_t *pg_mht_init(int k, int pre);
 pg_mht_t *pg_mht_copy(const pg_mht_t *src);
 void pg_mht_destroy(pg_mht_t *h);
-int64_t pg_mht_insert_list(pg_mht_t *h, int n, const ch_seq_t *a, int f);
-void pg_mht_count_list(pg_mht_t *h, int n, const ch_seq_t *a);
+int64_t pg_mht_insert_list(pg_mht_t *h, int n, const k_ch_seq_t *a, int f);
+void pg_mht_count_list(pg_mht_t *h, int n, const s_ch_seq_t *a);
 void pg_mht_clear_k(pg_mht_t *h, long i, int f);
 void pg_mht_clear_s(pg_mht_t *h, long i);
 int64_t pg_mht_filter(pg_mht_t *h, int n_proc, int n_tot, double min_freq, int ff);

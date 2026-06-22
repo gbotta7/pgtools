@@ -15,9 +15,10 @@
 KSEQ_INIT(gzFile, gzread)
 
 typedef struct {
-	int64_t n_ins;
-	ch_seq_t *a;
-	int n, m;
+    int64_t n_ins;
+    k_ch_seq_t *ak;  // first pass
+    s_ch_seq_t *as;  // snp pass
+    int n, m;
 } ch_buf_t;
 
 typedef struct {
@@ -48,53 +49,79 @@ typedef struct { 			// data structure for each step in kt_pipeline()
 	int *len;
 	ch_buf_t *buf;
     char **seq;
-	char **name;			// contig names
+	int *name_idx;			// contig names' index
     int n, m, sum_len, nk;
 } stepdat_t;
 
-static inline void ch_insert_buf(ch_buf_t *buf, int p, int k, uint64_t flanks, uint64_t center, int pos, char *s_name, char strand) // insert a k-mer $y to a linear buffer
-{
-	int pre = flanks & ((1<<p) - 1);
-	ch_buf_t *b = &buf[pre];
-	if (b->n == b->m) {
-		b->m = b->m < 8? 8 : b->m + (b->m>>1);
-		REALLOC(b->a, b->m);
-	}
-	b->a[b->n].h_flanks = flanks;
-    b->a[b->n].cb = center;
-	b->a[b->n].pos = pos;
-	if (strand) {
-		b->a[b->n].strand = strand;
-	}
-	b->a[b->n].seq_name = NULL; // prevent uninitialized garbage after initial calloc
-	if (s_name) {
-		MALLOC(b->a[b->n].seq_name, strlen(s_name) + 1);
-		memcpy(b->a[b->n].seq_name, s_name, strlen(s_name) + 1);
-	}
-    b->n++;
+
+static inline int ch_get_name_idx(cnames_t *nt, const char *name) {
+    if (nt->n > 0 && strcmp(nt->names[nt->n - 1], name) == 0)
+        return nt->n - 1;
+
+    if (nt->n == nt->m) {
+        nt->m = nt->m < 8 ? 8 : nt->m + (nt->m >> 1);
+        REALLOC(nt->names, nt->m);
+    }
+    MALLOC(nt->names[nt->n], strlen(name) + 1);
+    memcpy(nt->names[nt->n], name, strlen(name) + 1);
+    return nt->n++;
 }
 
-static void count_seq_buf(ch_buf_t *buf, int k, int p, int len, const char *seq, char *contig) // insert k-mers in $seq to linear buffer $buf
+
+static inline void ch_insert_buf(ch_buf_t *buf, pldat_t *p, uint64_t flanks, uint64_t center, int pos, int cname_idx, char strand) // insert a k-mer $y to a linear buffer
+{	
+	int pre = flanks & ((1<<p->opt->pre) - 1);
+	ch_buf_t *b = &buf[pre];
+
+	if (p->snp) {
+		if (b->n == b->m) {
+			b->m = b->m < 8? 8 : b->m + (b->m>>1);
+			REALLOC(b->as, b->m);
+		}
+		b->as[b->n].h_flanks = flanks;
+		b->as[b->n].cb = center;
+		b->as[b->n].pos = pos;
+		b->as[b->n].strand = strand;
+		b->as[b->n].idx = cname_idx;
+	} else {
+		if (b->n == b->m) {
+			b->m = b->m < 8? 8 : b->m + (b->m>>1);
+			REALLOC(b->ak, b->m);
+		}
+		b->ak[b->n].h_flanks = flanks;
+		b->ak[b->n].cb = center;
+	}
+	b->n++;
+}
+
+static void count_seq_buf(ch_buf_t *buf, pldat_t *p, int len, const char *seq, int cname_idx) // insert k-mers in $seq to linear buffer $buf
 {
 	int i, l;
-	uint64_t hash_mask = (1ULL<<((k-1)*2)) - 1; // to hash only the flanks
-	uint64_t x[2], mask = (1ULL<<k*2) - 1, shift = (k - 1) * 2;
+	uint64_t hash_mask = (1ULL<<((p->opt->k-1)*2)) - 1; // to hash only the flanks
+	uint64_t x[2], mask = (1ULL<<p->opt->k*2) - 1, shift = (p->opt->k - 1) * 2;
+
 	for (i = l = 0, x[0] = x[1] = 0; i < len; ++i) {
 		int c = seq_nt4_table[(uint8_t)seq[i]];
 		if (c < 4) { // not an "N" base
 			x[0] = (x[0] << 2 | c) & mask;                  // forward strand
 			x[1] = x[1] >> 2 | (uint64_t)(3 - c) << shift;  // reverse strand
-			if (++l >= k) { // we find a k-mer
+			if (++l >= p->opt->k) { // we find a k-mer
 				uint64_t y = x[0] < x[1]? x[0] : x[1];
-				uint64_t center = (y >> ((k/2)*2)) & 3;           		// extract center from raw y
-				uint64_t flanks = (y & ((1ULL<<(k/2)*2)-1))          	// right flank from raw y
-								| ((y >> ((k/2+1)*2)) << ((k/2)*2)); 	// left flank from raw y
-				if (contig) {
-					char strand = x[0] < x[1]? '+' : '-';
-					ch_insert_buf(buf, p, k, pg_hash64(flanks, hash_mask), center, i-k/2, contig, strand); // i-k/2 is the 0-based position of center
-				} else {
-					ch_insert_buf(buf, p, k, pg_hash64(flanks, hash_mask), center, i-k/2, 0, 0); // i-k/2 is the 0-based position of center
-				}
+				uint64_t center = (y >> ((p->opt->k/2)*2)) & 3;           				// extract center from raw y
+				uint64_t flanks = (y & ((1ULL<<(p->opt->k/2)*2)-1))          			// right flank from raw y
+								| ((y >> ((p->opt->k/2+1)*2)) << ((p->opt->k/2)*2)); 	// left flank from raw y
+				uint64_t hflanks = pg_hash64(flanks, hash_mask);
+				char strand = x[0] < x[1]? '+' : '-';
+
+                // in snp pass: skip immediately if not in hash table (so buf does not grow)
+                // if (p->snp || p->filt) {
+				// if (p->snp) {
+                //     uint64_t key = hflanks >> p->opt->pre;
+                //     pg_ht1_t *g = &p->h->h[hflanks & ((1<<p->opt->pre) - 1)];
+                //     if (pg_ht_get(g->h, key) == kh_end(g->h)) continue;
+                // }
+			
+				ch_insert_buf(buf, p, hflanks, center, i-p->opt->k/2, cname_idx, strand); // i-k/2 is the 0-based position of center
 			}
 		} else l = 0, x[0] = x[1] = 0; // if there is an "N", restart
 	}
@@ -108,9 +135,9 @@ static void worker_for(void *data, long i, int tid) // callback for kt_for()
 	pg_mht_t *h = s->p->h;
 
 	if (s->p->snp)
-		pg_mht_count_list(h, b->n, b->a);
+		pg_mht_count_list(h, b->n, b->as);
 	else
-		b->n_ins += pg_mht_insert_list(h, b->n, b->a, s->p->filt);
+		b->n_ins += pg_mht_insert_list(h, b->n, b->ak, s->p->filt);
 }
 
 static void clear_for(void *data, long i, int tid) // callback for kt_for()
@@ -137,12 +164,12 @@ static void *worker_pipeline(void *data, int step, void *in) // callback for kt_
 				s->m = s->m < 16? 16 : s->m + (s->n>>1);
 				REALLOC(s->len, s->m);
 				REALLOC(s->seq, s->m);
-				REALLOC(s->name, s->m);
+				REALLOC(s->name_idx, s->m);
+				// REALLOC(s->name, s->m);
 			}
 			MALLOC(s->seq[s->n], l);
 			memcpy(s->seq[s->n], p->ks->seq.s, l);
-			MALLOC(s->name[s->n], p->ks->name.l + 1);
-			memcpy(s->name[s->n], p->ks->name.s, p->ks->name.l + 1);
+			s->name_idx[s->n] = p->snp ? ch_get_name_idx(&p->h->cnames, p->ks->name.s) : -1;
 			s->len[s->n++] = l;
 			s->sum_len += l;
 			s->nk += l - p->opt->k + 1;
@@ -155,21 +182,22 @@ static void *worker_pipeline(void *data, int step, void *in) // callback for kt_
 		stepdat_t *s = (stepdat_t*)in;
 		int i, n = 1<<p->opt->pre, m;
 		CALLOC(s->buf, n);
-		m = (int)(s->nk * 1.2 / n) + 1;
+		m = p->snp ? (int)(p->h->n_ins_tot * 1.2 / n) + 1 : (int)(s->nk * 1.2 / n) + 1; // pre-allocate much less memory in SNP pass
 		for (i = 0; i < n; ++i) {
 			s->buf[i].m = m;
-			CALLOC(s->buf[i].a, m);
+			if (p->snp)
+				CALLOC(s->buf[i].as, m);
+			else
+				CALLOC(s->buf[i].ak, m);
 		}
 		for (i = 0; i < s->n; ++i) {
-			if(p->snp) {
-				count_seq_buf(s->buf, p->opt->k, p->opt->pre, s->len[i], s->seq[i], s->name[i]);
-			} else {
-				count_seq_buf(s->buf, p->opt->k, p->opt->pre, s->len[i], s->seq[i], 0);
-			}
+			count_seq_buf(s->buf, p, s->len[i], s->seq[i],
+              p->snp ? s->name_idx[i] : 0);
 			free(s->seq[i]);
-			free(s->name[i]);
+			// free(s->name[i]);
 		}
-		free(s->seq); free(s->len); free(s->name);
+		free(s->seq); free(s->len); free(s->name_idx);
+		// free(s->name);
 		return s;
 	} else if (step == 2) { // step 3: insert k-mers to hash table
 		stepdat_t *s = (stepdat_t*)in;
@@ -179,9 +207,12 @@ static void *worker_pipeline(void *data, int step, void *in) // callback for kt_
 		kt_for(f_threads, worker_for, s, n);
 		for (i = 0; i < n; ++i) {
 			n_ins += s->buf[i].n_ins;
-			for (int j = 0; j < s->buf[i].n; ++j)
-    			free(s->buf[i].a[j].seq_name); 
-			free(s->buf[i].a);
+			// for (int j = 0; j < s->buf[i].n; ++j)
+    		// 	free(s->buf[i].a[j].seq_name); 
+			if (p->snp)
+				free(s->buf[i].as);
+			else
+				free(s->buf[i].ak);
 		}
 		p->h->n_ins_tot += n_ins;
 
@@ -231,6 +262,7 @@ pg_mht_t *pg_count(const char **fns, const int n_fns, const pg_opt_t *opt, const
 			pl.h->n_del_tot += n_del;
 			pl.h->n_ins_tot -= n_del;
 			pl.filt = 1;
+			pg_mht_tighten(pl.h);
 			if (opt->verbose) {
 				fprintf(stderr, "[M::%s] Filtered %ld k-mer entries\n", __func__, n_del);
 			}
@@ -247,6 +279,7 @@ pg_mht_t *pg_count(const char **fns, const int n_fns, const pg_opt_t *opt, const
 		int64_t n_del = pg_mht_filter(pl.h, n_fns, n_fns, pl.opt->min_freq, 1); // filter to keep only SNP-mers
 		pl.h->n_del_tot += n_del;
 		pl.h->n_ins_tot -= n_del;
+		pg_mht_tighten(pl.h);
 		if (opt->verbose) {
 			fprintf(stderr, "[M::%s] Filtered %ld k-mer entries\n", __func__, n_del);
 		}
@@ -384,7 +417,7 @@ void pg_findsnp(const char **fns, const int n_fns, int64_t n_snps, const pg_opt_
 
 	// store this genome's counts to its own file (no mutex: own file)
 	char gnm_path[4096];
-	snprintf(gnm_path, sizeof gnm_path, "%s/gnm.%d.vcf", fd.tmpdir, i);
+	snprintf(gnm_path, sizeof gnm_path, "%s/gnm.%d.vcf", fd.tmpdir, ref_idx);
 	write_vcf(gnm_path, pl_ref.h, fd.ref_h, pl_ref.fn);
 	
 

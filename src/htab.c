@@ -10,8 +10,6 @@
 #include "kseq.h"
 #include "utils.h"
 
-KHASHL_MAP_INIT(, pg_ht_t, pg_ht, uint64_t, uint32_t, kh_hash_uint64, kh_eq_generic)
-KHASHL_MAP_INIT(, pg_im_t, pg_im, uint64_t, kinfo_t, kh_hash_uint64, kh_eq_generic)
 KHASHL_SET_INIT(, strset_t, strset, const char *, kh_hash_str, kh_eq_str)
 
 // Operations on hash tables and bloom filter.
@@ -64,6 +62,9 @@ pg_mht_t *pg_mht_copy(const pg_mht_t *src) {
 		dst->h[i].h = pg_ht_copy(src->h[i].h);
 		dst->m[i].m = pg_im_init();
 	}
+	// dst->cnames.names = NULL;
+    // dst->cnames.n = 0;
+    // dst->cnames.m = 0;
     return dst;
 }
 
@@ -73,11 +74,7 @@ void pg_im1_destroy(pg_im1_t *m)
     for (k = 0; k < kh_end(m->m); ++k) {
         if (!kh_exist(m->m, k)) continue;
         kinfo_t *info = &kh_val(m->m, k);
-        for (int j = 0; j < info->n; ++j)
-            free(info->seq_name[j]);
-        free(info->seq_name);
-        free(info->pos);
-        free(info->strand);
+        free(info->i);
     }
     pg_im_destroy(m->m);
 }
@@ -151,7 +148,7 @@ int64_t pg_mht_filter(pg_mht_t *h, int n_proc, int n_tot, double min_freq, int f
 	return n_del;
 }
 
-int64_t pg_mht_insert_list(pg_mht_t *h, int n, const ch_seq_t *a, int f)
+int64_t pg_mht_insert_list(pg_mht_t *h, int n, const k_ch_seq_t *a, int f)
 {
 	int j, mask = (1<<h->pre) - 1;
 	int64_t n_ins = 0;
@@ -302,12 +299,7 @@ void pg_mht_clear_s(pg_mht_t *h, long i)
     for (k = 0; k < kh_end(m->m); ++k) {
         if (!kh_exist(m->m, k)) continue;
         kinfo_t *info = &kh_val(m->m, k);
-        for (int j = 0; j < info->n; ++j) {
-            free(info->seq_name[j]);
-        }
-        free(info->seq_name);
-        free(info->pos);
-        free(info->strand);
+        free(info->i);
     }
     pg_im_destroy(m->m);
 	m->m = pg_im_init();
@@ -319,8 +311,13 @@ void pg_mht_tighten(pg_mht_t *h)
 	int i;
 	for (i = 0; i < 1<<h->pre; ++i) {
 		pg_ht_t *g = h->h[i].h;
-		if (kh_size(g) * 3 < kh_capacity(g))
-			pg_ht_m_resize(g, kh_size(g) * 3);
+		uint32_t sz = kh_size(g);
+		if (sz == 0) {
+            pg_ht_destroy(g);
+            h->h[i].h = pg_ht_init();
+		}
+		else if (sz * 3 < kh_capacity(g))
+			pg_ht_m_resize(g, sz * 3);
 	}
 }
 
@@ -344,7 +341,7 @@ void pg_mht_rearrange(pg_mht_t *h, long i)
 }
 
 
-void pg_mht_count_list(pg_mht_t *h, int n, const ch_seq_t *a)
+void pg_mht_count_list(pg_mht_t *h, int n, const s_ch_seq_t *a)
 {
 	int j, mask = (1<<h->pre) - 1;
 	pg_ht1_t *g;
@@ -363,7 +360,7 @@ void pg_mht_count_list(pg_mht_t *h, int n, const ch_seq_t *a)
 		
 		// snp-mers pass
 		khint_t k = pg_ht_get(g->h, key);
-		if (k == kh_end(g->h)) continue; // not a SNP-mer, skip
+		if (k == kh_end(g->h)) continue; // not a SNP-mer, skip (in theory can be removed given lookup in ch_insert_buf)
 
 		// add counts
 		v = kh_val(g->h, k);
@@ -387,29 +384,24 @@ void pg_mht_count_list(pg_mht_t *h, int n, const ch_seq_t *a)
 		// add info
 		int absent;
 		khint_t i = pg_im_put(m->m, key, &absent);
+		kinfo_t *info = &kh_val(m->m, i);;
 		if (absent) {
-			kh_val(m->m, i).n = 1;
-			MALLOC(kh_val(m->m, i).pos, 1);
-			MALLOC(kh_val(m->m, i).strand, 1);
-			MALLOC(kh_val(m->m, i).seq_name, 1);
-
-			kh_val(m->m, i).pos[0] = a[j].pos;
-			kh_val(m->m, i).strand[0] = a[j].strand;
-
-			MALLOC(kh_val(m->m, i).seq_name[0], strlen(a[j].seq_name) + 1);
-			memcpy(kh_val(m->m, i).seq_name[0], a[j].seq_name, strlen(a[j].seq_name) + 1);
+			memset(info, 0, sizeof(kinfo_t));
+			info->n = 1;
+			info->m = 1;
+			MALLOC(info->i, 1);
+			info->i[0].pos = a[j].pos;
+			info->i[0].strand = a[j].strand;
+			info->i[0].seq_idx = a[j].idx;
 		} else {
-			int n = kh_val(m->m, i).n++;
-
-			REALLOC(kh_val(m->m, i).pos, kh_val(m->m, i).n);
-			REALLOC(kh_val(m->m, i).strand, kh_val(m->m, i).n);
-			REALLOC(kh_val(m->m, i).seq_name, kh_val(m->m, i).n);
-
-			kh_val(m->m, i).pos[n] = a[j].pos;
-			kh_val(m->m, i).strand[n] = a[j].strand;
-
-			MALLOC(kh_val(m->m, i).seq_name[n], strlen(a[j].seq_name) + 1);
-			memcpy(kh_val(m->m, i).seq_name[n], a[j].seq_name, strlen(a[j].seq_name) + 1);
+			if (info->n == info->m) {
+				info->m = info->m + (info->m >> 1); // grow by 1.5x
+				REALLOC(info->i, info->m);
+			}
+			int n = info->n++;
+			info->i[n].pos = a[j].pos;
+			info->i[n].strand = a[j].strand;
+			info->i[n].seq_idx = a[j].idx;
 		}
 
 	}
@@ -484,9 +476,10 @@ void write_vcf(const char *out_fn, pg_mht_t *h, pg_mht_t *ref_h, char *gnm_fn)
 			if (!kh_exist(ref_m->m, k)) continue;
 
 			int absent;
-			strset_put(seen, kh_val(ref_m->m, k).seq_name[0], &absent);
+			const char *ref_cname = ref_h->cnames.names[kh_val(ref_m->m, k).i[0].seq_idx];
+			strset_put(seen, ref_cname, &absent);
 			if (absent)
-				fprintf(fp, "##contig=<ID=%s>\n", kh_val(ref_m->m, k).seq_name[0]);
+				fprintf(fp, "##contig=<ID=%s>\n", ref_cname);
 		}
 	}
 	fprintf(fp, "##contig=<ID=.>\n"); // add contig not found in reference
@@ -514,11 +507,6 @@ void write_vcf(const char *out_fn, pg_mht_t *h, pg_mht_t *ref_h, char *gnm_fn)
         for (k = 0; k < kh_end(g->h); ++k) {
             if (!kh_exist(g->h, k)) continue;
 
-			// uint64_t y = pg_hash64_inv(kh_key(g, k), (1ULL << (h->k * 2)) - 1);
-			// uint64_t flanks = (y & ((1ULL<<(h->k/2)*2)-1))          	// right flank from raw y
-			// 				| ((y >> ((h->k/2+1)*2)) << ((h->k/2)*2)); 	// left flank from raw y
-			// uint64_t key = pg_hash64(flanks, (1ULL<<((h->k-1)*2)) - 1);
-			// paf_rec_t rec = fetch_paf_rec(paf_idx, fn_paf, key, h->k);
             uint32_t v = kh_val(g->h, k);
             uint32_t cb1 = s_val_cb1(v);
             uint32_t cb2 = s_val_cb2(v);
@@ -541,8 +529,8 @@ void write_vcf(const char *out_fn, pg_mht_t *h, pg_mht_t *ref_h, char *gnm_fn)
 			if (ref_info_k != kh_end(ref_m->m)) {
 				kinfo_t *ref_occ = &kh_val(ref_m->m, ref_info_k);
 				if (ref_occ->n > 0) {
-					chrom_name = ref_occ->seq_name[0];
-					target_pos = ref_occ->pos[0];
+					chrom_name = ref_h->cnames.names[ref_occ->i[0].seq_idx];
+					target_pos = ref_occ->i[0].pos;
 				}
 			}
 
@@ -554,22 +542,23 @@ void write_vcf(const char *out_fn, pg_mht_t *h, pg_mht_t *ref_h, char *gnm_fn)
 			if (info_k != kh_end(m->m)) {
 				kinfo_t *occ = &kh_val(m->m, info_k);
 				for (int j = 0; j < occ->n; ++j) {
-					khint_t info_k_ref = strset_get(seen, occ->seq_name[j]);
-					if (info_k_ref != kh_end(seen) && occ->n == 1) {
+					const char *name = h->cnames.names[occ->i[j].seq_idx];
+					khint_t ref_seen_k = strset_get(seen, name);
+					if (ref_seen_k != kh_end(seen) && occ->n == 1) {
 						info[0] = '.'; info[1] = '\0'; info_len = 1;
-					} else if (info_k_ref != kh_end(seen) && occ->n > 1) {
+					} else if (ref_seen_k != kh_end(seen) && occ->n > 1) {
 						if (j) {
 							info_len += snprintf(info + info_len, sizeof(info) - info_len,
 												"%s|%c|%d,",
-												occ->seq_name[j], occ->strand[j], occ->pos[j]);
+												name, occ->i[j].strand, occ->i[j].pos);
 						}
 					} else {
 						info_len += snprintf(info + info_len, sizeof(info) - info_len,
 											"%s|%c|%d,",
-											occ->seq_name[j], occ->strand[j], occ->pos[j]);
+											name, occ->i[j].strand, occ->i[j].pos);
 					}
 				}
-			}
+			}			
 			if (info_len == 0) {
 				info[0] = '.'; info[1] = '\0';
 			} else {
@@ -591,233 +580,6 @@ void write_vcf(const char *out_fn, pg_mht_t *h, pg_mht_t *ref_h, char *gnm_fn)
     fclose(fp);
 }
 
-
-// void merge_vcfs(const char *out_fn, const char *tmpdir, int n_fns, int n_snps)
-// {
-//     FILE **fps = malloc(n_fns * sizeof(FILE*));
-//     for (int i = 0; i < n_fns; ++i) {
-//         char p[4096];
-//         snprintf(p, sizeof p, "%s/gnm.%d.vcf", tmpdir, i);
-//         fps[i] = fopen(p, "r");
-//         if (!fps[i]) {
-// 			fprintf(stderr, "[M::%s] Failed to open '%s'\n", __func__, p);
-//         }
-//     }
-
-//     FILE *out = fopen(out_fn, "w");
-
-//     // VCF header
-//     char **sample_names = malloc(n_fns * sizeof(char*));
-//     char line[4096];
-//     for (int i = 0; i < n_fns; ++i) {
-//         sample_names[i] = NULL;
-//         while (fgets(line, sizeof line, fps[i])) {
-//             if (strncmp(line, "#CHROM", 6) == 0) {
-//                 // extract sample name (last tab-separated token)
-//                 char *tok = strrchr(line, '\t');
-//                 if (tok) {
-//                     tok++; // skip the tab
-//                     // strip newline
-//                     tok[strcspn(tok, "\n")] = '\0';
-//                     sample_names[i] = strdup(tok);
-//                 }
-//                 break; // done with header for this file
-//             }
-//             // only write meta-lines from genome 0
-//             if (i == 0 && line[0] == '#') {
-//                 fputs(line, out);
-//             }
-//         }
-//     }
-
-//     fprintf(out, "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT");
-//     for (int i = 0; i < n_fns; ++i)
-//         fprintf(out, "\t%s", sample_names[i] ? sample_names[i] : "UNKNOWN");
-//     fprintf(out, "\n");
-
-// 	// VCF content
-//     char **lines = malloc(n_fns * sizeof(char*));
-//     for (int i = 0; i < n_fns; ++i)
-//         lines[i] = malloc(4096);
-
-//     for (int s = 0; s < n_snps; ++s) {
-//         // read one line from each file
-//         for (int i = 0; i < n_fns; ++i) {
-//             if (!fgets(lines[i], 4096, fps[i])) {
-// 				fprintf(stderr, "[M::%s] Unexpected EOF in genome %d at SNP %d\n", __func__, i, s);
-//             }
-//             // strip newline
-//             lines[i][strcspn(lines[i], "\n")] = '\0';
-//         }
-
-//         // we want everything up to and including FORMAT for the first file
-//         char *p = lines[0];
-//         int tab_count = 0;
-//         char *sample_start = NULL;
-//         for (char *c = p; *c; ++c) {
-//             if (*c == '\t') {
-//                 ++tab_count;
-//                 if (tab_count == 9) { // after FORMAT field
-//                     *c = '\0';
-//                     sample_start = c + 1;
-//                     break;
-//                 }
-//             }
-//         }
-//         fprintf(out, "%s\t%s", p, sample_start); // fixed fields + sample 0
-
-//         // append sample columns from following genomes
-//         for (int i = 1; i < n_fns; ++i) {
-//             // extract just the sample column (after the 9th tab)
-//             char *sp = lines[i];
-//             int tc = 0;
-//             for (char *c = sp; *c; ++c) {
-//                 if (*c == '\t' && ++tc == 9) {
-//                     fprintf(out, "\t%s", c + 1);
-//                     break;
-//                 }
-//             }
-//         }
-//         fprintf(out, "\n");
-//     }
-
-//     // cleanup
-//     for (int i = 0; i < n_fns; ++i) {
-//         fclose(fps[i]);
-//         free(lines[i]);
-//         free(sample_names[i]);
-//     }
-//     free(fps); free(lines); free(sample_names);
-//     fclose(out);
-// }
-
-// void merge_vcfs(const char *out_fn, const char *tmpdir, int n_fns, int n_snps)
-// {
-//     FILE **fps = malloc(n_fns * sizeof(FILE*));
-//     for (int i = 0; i < n_fns; ++i) {
-//         char p[4096];
-//         snprintf(p, sizeof p, "%s/gnm.%d.vcf", tmpdir, i);
-//         fps[i] = fopen(p, "r");
-//         if (!fps[i])
-//             fprintf(stderr, "[M::%s] Failed to open '%s'\n", __func__, p);
-//     }
-
-//     FILE *out = fopen(out_fn, "w");
-
-//     // VCF header — meta-lines from file 0 only
-//     char **sample_names = malloc(n_fns * sizeof(char*));
-//     char line[65536];
-//     for (int i = 0; i < n_fns; ++i) {
-//         sample_names[i] = NULL;
-//         while (fgets(line, sizeof line, fps[i])) {
-//             if (strncmp(line, "#CHROM", 6) == 0) {
-//                 char *tok = strrchr(line, '\t');
-//                 if (tok) {
-//                     tok++;
-//                     tok[strcspn(tok, "\n")] = '\0';
-//                     sample_names[i] = strdup(tok);
-//                 }
-//                 break;
-//             }
-//             if (i == 0 && line[0] == '#')
-//                 fputs(line, out);
-//         }
-//     }
-
-//     fprintf(out, "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT");
-//     for (int i = 0; i < n_fns; ++i)
-//         fprintf(out, "\t%s", sample_names[i] ? sample_names[i] : "UNKNOWN");
-//     fprintf(out, "\n");
-
-//     // VCF content
-//     char **lines = malloc(n_fns * sizeof(char*));
-//     for (int i = 0; i < n_fns; ++i)
-//         lines[i] = malloc(65536);
-
-//     for (int s = 0; s < n_snps; ++s) {
-//         for (int i = 0; i < n_fns; ++i) {
-//             if (!fps[i] || !fgets(lines[i], 65536, fps[i]))
-//                 lines[i][0] = '\0';
-//             lines[i][strcspn(lines[i], "\n")] = '\0';
-//         }
-
-//         // parse fixed fields from file 0: CHROM POS ID REF ALT QUAL FILTER
-//         // then collect all INFO fields and merge them
-//         // fields: 0=CHROM, 1=POS, 2=ID, 3=REF, 4=ALT, 5=QUAL, 6=FILTER, 7=INFO, 8=FORMAT, 9=sample
-//         char *fixed_end = NULL;  // end of FORMAT field
-//         char *sample_start = NULL;
-
-//         // get CHROM..FILTER from file 0 (7 fields)
-//         char *p = lines[0];
-//         char *fields[10] = {0};
-//         char *tmp = lines[0];
-//         int fc = 0;
-//         fields[fc++] = tmp;
-//         for (char *c = tmp; *c && fc < 10; ++c) {
-//             if (*c == '\t') {
-//                 *c = '\0';
-//                 fields[fc++] = c + 1;
-//             }
-//         }
-//         // fields[0..6] = CHROM POS ID REF ALT QUAL FILTER
-//         // fields[7] = INFO, fields[8] = FORMAT, fields[9] = sample
-
-//         // merge INFO from all files
-//         char merged_info[65536];
-//         int info_len = 0;
-//         for (int i = 0; i < n_fns; ++i) {
-//             // extract INFO field (field 7) from each file
-//             char *sp = lines[i];
-//             int tc = 0;
-//             char *info_start = NULL, *info_end = NULL;
-//             for (char *c = sp; *c; ++c) {
-//                 if (*c == '\t') {
-//                     ++tc;
-//                     if (tc == 7) info_start = c + 1;
-//                     if (tc == 8) { info_end = c; break; }
-//                 }
-//             }
-//             if (info_start && info_end && info_end > info_start) {
-//                 int len = info_end - info_start;
-//                 if (!(len == 1 && *info_start == '.')) {
-//                     if (info_len > 0) merged_info[info_len++] = ';';
-//                     memcpy(merged_info + info_len, info_start, len);
-//                     info_len += len;
-//                 }
-//             }
-//         }
-//         if (info_len == 0) { merged_info[0] = '.'; merged_info[1] = '\0'; }
-//         else merged_info[info_len] = '\0';
-
-//         // write CHROM POS ID REF ALT QUAL FILTER merged_INFO FORMAT sample0
-//         fprintf(out, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s",
-//                 fields[0], fields[1], fields[2], fields[3],
-//                 fields[4], fields[5], fields[6],
-//                 merged_info, fields[8], fields[9]);
-
-//         // append sample columns from remaining files
-//         for (int i = 1; i < n_fns; ++i) {
-//             char *sp = lines[i];
-//             int tc = 0;
-//             for (char *c = sp; *c; ++c) {
-//                 if (*c == '\t' && ++tc == 9) {
-//                     fprintf(out, "\t%s", c + 1);
-//                     break;
-//                 }
-//             }
-//         }
-//         fprintf(out, "\n");
-//     }
-
-//     for (int i = 0; i < n_fns; ++i) {
-//         if (fps[i]) fclose(fps[i]);
-//         free(lines[i]);
-//         free(sample_names[i]);
-//     }
-//     free(fps); free(lines); free(sample_names);
-//     fclose(out);
-// }
-
 void merge_vcfs(const char *out_fn, const char *tmpdir, int n_fns, int n_snps)
 {
     FILE **fps = malloc(n_fns * sizeof(FILE*));
@@ -829,7 +591,9 @@ void merge_vcfs(const char *out_fn, const char *tmpdir, int n_fns, int n_snps)
             fprintf(stderr, "[M::%s] Failed to open '%s'\n", __func__, p);
     }
 
-    FILE *out = fopen(out_fn, "w");
+	FILE *out;
+	if ((out = strcmp(out_fn, "-") ? fopen(out_fn, "wb") : stdout) == 0)
+		return -1;
 
     // VCF header — meta-lines from file 0 only
     char **sample_names = malloc(n_fns * sizeof(char*));
@@ -940,5 +704,8 @@ void merge_vcfs(const char *out_fn, const char *tmpdir, int n_fns, int n_snps)
         free(sample_names[i]);
     }
     free(fps); free(lines); free(sample_names);
-    fclose(out);
+
+	if (out && out != stdout)
+        fclose(out);
+    // fclose(out);
 }

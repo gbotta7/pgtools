@@ -9,7 +9,7 @@
 #include "sys.h"
 #include "utils.h"
 
-double *main_count(int argc, char *argv[])
+int main_count(int argc, char *argv[])
 {   
     pg_mht_t *h;
 	char *fn_snps = 0;
@@ -76,6 +76,8 @@ double *main_count(int argc, char *argv[])
 
 	// first step: count k-mers in the input files argv and filter for SNP-mers
 	h = pg_count(argv + o.ind, argc - o.ind, &opt, fn_snps);
+
+	pg_mht_tighten(h);
 
     // // second step: find SNPs positions with ropebwt3
 	// double *rb3_stats = calloc(3, sizeof(double));
@@ -159,6 +161,12 @@ double *main_count(int argc, char *argv[])
 		ref_fn = argv[o.ind];
 		fprintf(stderr, "[M::%s] No reference passed, taking %s as a reference\n", __func__, argv[o.ind]);
 	}
+
+	// reduce chunk_size for second pass
+	opt.chunk_size = opt.chunk_size / 10;
+	if (opt.chunk_size < 1024*1024) opt.chunk_size = 1024*1024; // minimum 1MB
+
+	if (fn_out == NULL) fn_out = "-"; // redirect output to stdout
 	pg_findsnp(argv + o.ind, argc - o.ind, h->n_ins_tot, &opt, h, ref_fn, fn_out);
 
 	fprintf(stderr, "[M::%s] Analyzed %d files\n", __func__, argc - o.ind);
@@ -183,6 +191,6 @@ int main(int argc, char *argv[])
 		// fprintf(stderr, "\n[M::%s] Real time: %.3f sec; CPU: %.3f sec; Peak RSS: %.3f GB\n", __func__, pg_realtime() + rb3_stats[0], pg_cputime() + rb3_stats[1], (pg_peakrss() / 1024.0 / 1024.0 / 1024.0 > rb3_stats[2]) ? (pg_peakrss() / 1024.0 / 1024.0 / 1024.0) : (rb3_stats[2]));
 		fprintf(stderr, "\n[M::%s] Real time: %.3f sec; CPU: %.3f sec; Peak RSS: %.3f GB\n", __func__, pg_realtime(), pg_cputime(), pg_peakrss() / 1024.0 / 1024.0 / 1024.0);
 	}
-
-    return 0;
+	
+	return ret;
 }
