@@ -62,9 +62,6 @@ pg_mht_t *pg_mht_copy(const pg_mht_t *src) {
 		dst->h[i].h = pg_ht_copy(src->h[i].h);
 		dst->m[i].m = pg_im_init();
 	}
-	// dst->cnames.names = NULL;
-    // dst->cnames.n = 0;
-    // dst->cnames.m = 0;
     return dst;
 }
 
@@ -89,24 +86,6 @@ void pg_mht_destroy(pg_mht_t *h)
 	}
 	free(h->h); free(h->m); free(h);
 }
-
-// void *pg_mht_idx(pg_mht_t *h)
-// {
-// 	uint32_t n_snps = 0;
-
-// 	for (int i = 0; i < 1<<h->pre; ++i) {
-// 		pg_ht_t *g = &h->h[i];
-// 		uint32_t cap = kh_capacity(g);
-// 		h->id_map[i].n = cap;
-// 		h->id_map[i].ids = malloc(cap * sizeof(uint32_t));
-// 		memset(h->id_map[i].ids, 0xFF, cap * sizeof(uint32_t)); // UINT32_MAX = not a SNP
-// 		for (khint_t k = 0; k < kh_end(g); ++k) {
-// 			if (!kh_exist(g, k)) continue;
-// 			uint32_t v = kh_val(g, k);
-// 			h->id_map[i].ids[k] = n_snps++;
-// 		}
-// 	}
-// }
 
 int64_t pg_mht_filter(pg_mht_t *h, int n_proc, int n_tot, double min_freq, int ff)
 {	
@@ -434,12 +413,10 @@ void pg_dump_snps(const char *fn, pg_mht_t *h) {
 			seq[h->k] = '\0';
 
 			seq[mid] = nt4_seq_table[cb1];
-			// fprintf(fp, ">seq%u_ref\n", h->id_map[i].ids[k]);
 			// fprintf(fp, ">%s\n", seq);
 			fprintf(fp, "%s\n", seq);
 
 			seq[mid] = nt4_seq_table[cb2];
-			// fprintf(fp, ">seq%u_alt\n", h->id_map[i].ids[k]);
 			// fprintf(fp, ">%s\n", seq);
 			fprintf(fp, "%s\n", seq);
 
@@ -707,5 +684,4 @@ void merge_vcfs(const char *out_fn, const char *tmpdir, int n_fns, int n_snps)
 
 	if (out && out != stdout)
         fclose(out);
-    // fclose(out);
 }

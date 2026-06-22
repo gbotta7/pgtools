@@ -67,18 +67,6 @@ typedef struct { // terminal options
     int verbose;
 } pg_opt_t;
 
-// typedef struct {
-//     uint32_t *ids;
-//     uint32_t  n;
-// } pg_id_map_t;
-
-// typedef struct {
-//     int *seq_idx;
-//     int *pos;
-//     char *strand;
-//     int n, m;
-// } kinfo_t;
-
 typedef struct {
     int pos;
     int seq_idx;
@@ -133,7 +121,6 @@ void pg_mht_tighten(pg_mht_t *h);
 void pg_dump_snps(const char *fn, pg_mht_t *h);
 
 void pg_mht_rearrange(pg_mht_t *h, long i);
-// void *pg_mht_idx(pg_mht_t *h);
 void write_vcf(const char *out_fn, pg_mht_t *h, pg_mht_t *ref_h, char *gnm_fn);
 void merge_vcfs(const char *out_fn, const char *tmpdir, int n_fns, int n_snps);
 

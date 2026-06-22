@@ -115,7 +115,6 @@ static void count_seq_buf(ch_buf_t *buf, pldat_t *p, int len, const char *seq, i
 
                 // in snp pass: skip immediately if not in hash table (so buf does not grow)
                 // if (p->snp || p->filt) {
-				// if (p->snp) {
                 //     uint64_t key = hflanks >> p->opt->pre;
                 //     pg_ht1_t *g = &p->h->h[hflanks & ((1<<p->opt->pre) - 1)];
                 //     if (pg_ht_get(g->h, key) == kh_end(g->h)) continue;
@@ -194,10 +193,8 @@ static void *worker_pipeline(void *data, int step, void *in) // callback for kt_
 			count_seq_buf(s->buf, p, s->len[i], s->seq[i],
               p->snp ? s->name_idx[i] : 0);
 			free(s->seq[i]);
-			// free(s->name[i]);
 		}
 		free(s->seq); free(s->len); free(s->name_idx);
-		// free(s->name);
 		return s;
 	} else if (step == 2) { // step 3: insert k-mers to hash table
 		stepdat_t *s = (stepdat_t*)in;
@@ -207,8 +204,6 @@ static void *worker_pipeline(void *data, int step, void *in) // callback for kt_
 		kt_for(f_threads, worker_for, s, n);
 		for (i = 0; i < n; ++i) {
 			n_ins += s->buf[i].n_ins;
-			// for (int j = 0; j < s->buf[i].n; ++j)
-    		// 	free(s->buf[i].a[j].seq_name); 
 			if (p->snp)
 				free(s->buf[i].as);
 			else
@@ -287,8 +282,6 @@ pg_mht_t *pg_count(const char **fns, const int n_fns, const pg_opt_t *opt, const
 
 	pg_mht_tighten(pl.h);
 
-	// pl.h->id_map = calloc(1<<pl.h->pre, sizeof(pg_id_map_t));
-	// pg_mht_idx(pl.h);
 	if (out) {
 		pg_dump_snps(out, pl.h);
 	}
