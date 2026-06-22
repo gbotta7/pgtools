@@ -289,7 +289,9 @@ pg_mht_t *pg_count(const char **fns, const int n_fns, const pg_opt_t *opt, const
 
 	// pl.h->id_map = calloc(1<<pl.h->pre, sizeof(pg_id_map_t));
 	// pg_mht_idx(pl.h);
-	pg_dump_snps(out, pl.h);
+	if (out) {
+		pg_dump_snps(out, pl.h);
+	}
 
     return pl.h;
 }
