@@ -32,7 +32,7 @@ Each genome is streamed again in chunks, and only its SNP-mers are inserted into
 
 ```bash
 git clone <repo>
-cd pgtools
+cd pgtools/src
 make
 ```
 
