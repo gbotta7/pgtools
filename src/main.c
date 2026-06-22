@@ -55,18 +55,19 @@ int main_count(int argc, char *argv[])
 	if (argc - o.ind < 1) {
 		fprintf(stderr, "Usage: pgtools count [options] <in1.fa> [in2.fa [...]]\n");
 		fprintf(stderr, "Options:\n");
-		fprintf(stderr, "  -k INT     k-mer size [%d]\n", opt.k);
-		fprintf(stderr, "  -m FLOAT   minimum frequency of k-mers across inputs to be kept [%g]\n", opt.min_freq);
-		fprintf(stderr, "  -p INT     prefix length [%d]\n", opt.pre);
-		fprintf(stderr, "  -f INT	  filter type [%d]\n", opt.filt_type);
-		fprintf(stderr, "  -t INT     number of worker threads [%d]\n", opt.n_threads);
-		fprintf(stderr, "  -K INT     chunk size [1.9g]\n");
-		// fprintf(stderr, "  -i FILE    index file to run ropebwt3\n");
-		fprintf(stderr, "  -r FILE	  path of the reference genome\n");
-		fprintf(stderr, "  -v         verbose output\n");
-		fprintf(stderr, "  -a FILE    output pangenome SNP-mers\n");
-		// fprintf(stderr, "  -b FILE    output ropebwt3 paf file for SNP-mers\n");
-		fprintf(stderr, "  -o FILE    output genome-specific SNPs in VCF format\n");
+		fprintf(stderr, "  %-10s k-mer size [%d]\n",            "-k INT",  opt.k);
+		fprintf(stderr, "  %-10s minimum frequency of k-mers across inputs to be kept [%g]\n",
+				"-m FLOAT", opt.min_freq);
+		fprintf(stderr, "  %-10s prefix length [%d]\n",         "-p INT",  opt.pre);
+		fprintf(stderr, "  %-10s filter type [%d]\n",           "-f INT",  opt.filt_type);
+		fprintf(stderr, "  %-10s number of worker threads [%d]\n",
+				"-t INT",  opt.n_threads);
+		fprintf(stderr, "  %-10s chunk size [1.9g]\n",          "-K INT");
+		fprintf(stderr, "  %-10s path of the reference genome\n","-r FILE");
+		fprintf(stderr, "  %-10s verbose output\n",             "-v");
+		fprintf(stderr, "  %-10s output pangenome SNP-mers\n",  "-a FILE");
+		fprintf(stderr, "  %-10s output genome-specific SNPs in VCF format\n",
+				"-o FILE");
 		return 1;
 	}
 	if (opt.k >= 32 || !(opt.k % 2)) {
@@ -191,6 +192,6 @@ int main(int argc, char *argv[])
 		// fprintf(stderr, "\n[M::%s] Real time: %.3f sec; CPU: %.3f sec; Peak RSS: %.3f GB\n", __func__, pg_realtime() + rb3_stats[0], pg_cputime() + rb3_stats[1], (pg_peakrss() / 1024.0 / 1024.0 / 1024.0 > rb3_stats[2]) ? (pg_peakrss() / 1024.0 / 1024.0 / 1024.0) : (rb3_stats[2]));
 		fprintf(stderr, "\n[M::%s] Real time: %.3f sec; CPU: %.3f sec; Peak RSS: %.3f GB\n", __func__, pg_realtime(), pg_cputime(), pg_peakrss() / 1024.0 / 1024.0 / 1024.0);
 	}
-	
+
 	return ret;
 }
