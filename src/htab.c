@@ -426,7 +426,7 @@ void pg_dump_snps(const char *fn, pg_mht_t *h) {
 
 
 // VCF writer
-void write_vcf(const char *out_fn, pg_mht_t *h, pg_mht_t *ref_h, char *gnm_fn)
+void write_vcf(const char *out_fn, pg_mht_t *h, pg_mht_t *ref_h, char *gnm_fn, int write_info)
 {
     FILE *fp = fopen(out_fn, "w");
     if (!fp) {
@@ -515,27 +515,29 @@ void write_vcf(const char *out_fn, pg_mht_t *h, pg_mht_t *ref_h, char *gnm_fn)
 			char info[65536];
 			int info_len = 0;
 
-			khint_t info_k = pg_im_get(m->m, key);
-			if (info_k != kh_end(m->m)) {
-				kinfo_t *occ = &kh_val(m->m, info_k);
-				for (int j = 0; j < occ->n; ++j) {
-					const char *name = h->cnames.names[occ->i[j].seq_idx];
-					khint_t ref_seen_k = strset_get(seen, name);
-					if (ref_seen_k != kh_end(seen) && occ->n == 1) {
-						info[0] = '.'; info[1] = '\0'; info_len = 1;
-					} else if (ref_seen_k != kh_end(seen) && occ->n > 1) {
-						if (j) {
+			if (write_info) {
+				khint_t info_k = pg_im_get(m->m, key);
+				if (info_k != kh_end(m->m)) {
+					kinfo_t *occ = &kh_val(m->m, info_k);
+					for (int j = 0; j < occ->n; ++j) {
+						const char *name = h->cnames.names[occ->i[j].seq_idx];
+						khint_t ref_seen_k = strset_get(seen, name);
+						if (ref_seen_k != kh_end(seen) && occ->n == 1) {
+							info[0] = '.'; info[1] = '\0'; info_len = 1;
+						} else if (ref_seen_k != kh_end(seen) && occ->n > 1) {
+							if (j) {
+								info_len += snprintf(info + info_len, sizeof(info) - info_len,
+													"%s|%c|%d,",
+													name, occ->i[j].strand, occ->i[j].pos);
+							}
+						} else {
 							info_len += snprintf(info + info_len, sizeof(info) - info_len,
 												"%s|%c|%d,",
 												name, occ->i[j].strand, occ->i[j].pos);
 						}
-					} else {
-						info_len += snprintf(info + info_len, sizeof(info) - info_len,
-											"%s|%c|%d,",
-											name, occ->i[j].strand, occ->i[j].pos);
 					}
 				}
-			}			
+			}
 			if (info_len == 0) {
 				info[0] = '.'; info[1] = '\0';
 			} else {

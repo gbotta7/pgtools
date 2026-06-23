@@ -334,7 +334,7 @@ static void *worker_file(void *data)
 		char gnm_path[4096];
 		snprintf(gnm_path, sizeof gnm_path, "%s/gnm.%d.vcf", fd->tmpdir, i);
 
-		write_vcf(gnm_path, pl->h, fd->ref_h, pl->fn);
+		write_vcf(gnm_path, pl->h, fd->ref_h, pl->fn, pl->opt->write_info);
 
 		kt_for(pl->f_threads, clear_for, pl, 1 << pl->opt->pre); // clear mht in this thread
     }
@@ -413,7 +413,7 @@ void pg_findsnp(const char **fns, const int n_fns, int64_t n_snps, const pg_opt_
 	// store this genome's counts to its own file (no mutex: own file)
 	char gnm_path[4096];
 	snprintf(gnm_path, sizeof gnm_path, "%s/gnm.%d.vcf", fd.tmpdir, ref_idx);
-	write_vcf(gnm_path, pl_ref.h, fd.ref_h, pl_ref.fn);
+	write_vcf(gnm_path, pl_ref.h, fd.ref_h, pl_ref.fn, pl_ref.opt->write_info);
 	
 
 	// count SNPmers in each genome in parallel

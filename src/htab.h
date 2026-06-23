@@ -63,6 +63,7 @@ typedef struct { // terminal options
     double min_freq;
 	int32_t k;
     int32_t pre; // number of bits for partitioning.
+    int write_info;
     int filt_type;
     int verbose;
 } pg_opt_t;
@@ -121,7 +122,7 @@ void pg_mht_tighten(pg_mht_t *h);
 void pg_dump_snps(const char *fn, pg_mht_t *h);
 
 void pg_mht_rearrange(pg_mht_t *h, long i);
-void write_vcf(const char *out_fn, pg_mht_t *h, pg_mht_t *ref_h, char *gnm_fn);
+void write_vcf(const char *out_fn, pg_mht_t *h, pg_mht_t *ref_h, char *gnm_fn, int write_info);
 void merge_vcfs(const char *out_fn, const char *tmpdir, int n_fns, int n_snps);
 
 pg_mht_t *pg_count(const char **fns, const int n_fns, const pg_opt_t *opt, const char *out);

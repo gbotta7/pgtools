@@ -67,18 +67,32 @@ pgtools count -k31 -m0.98 -t12 \
         hmn_ref_asm/GRCh38_genomic.fna.gz hmn579_asm/*.fa
 ```
 
+To identify unique SNP-mers across 98% of the genomes in the hmn579 dataset against the reference (added to the assemblies) and keep mapping information across the pangenome, using 12 threads:
+```bash
+pgtools count -k31 -m0.98 -t12 \
+        -a hmn580_snpmers.txt \
+        -o hmn580_snpmers.vcf \
+        -r hmn_ref_asm/GRCh38_genomic.fna.gz \
+        -w \
+        hmn_ref_asm/GRCh38_genomic.fna.gz hmn579_asm/*.fa
+```
+
 ### Options
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `-k INT` | 31 | k-mer size (must be odd and ≤ 31) |
-| `-m FLOAT` | 0.95 | Minimum fraction of genomes a k-mer must appear in to be retained |
-| `-p INT` | 10 | Number of bits used for hash table partitioning (higher = more partitions) |
-| `-f INT` | 2 | Filter type for k-mers counting |
-| `-t INT` | 4 | Number of worker threads |
-| `-K INT` | 1.9g | Chunk size for streaming input |
-| `-v` | off | Verbose logging |
-| `-o FILE` | — | Output file (TSV) for per-genome SNP-mer counts |
+| Short      | Long               | Default | Description                                                                            |
+| ---------- | ------------------ | ------- | -------------------------------------------------------------------------------------- |
+| `-k INT`   | `--kmer INT`       | `31`    | k-mer size (must be odd and ≤ 31)                                                      |
+| `-m FLOAT` | `--min-freq FLOAT` | `0.95`  | Minimum fraction of genomes a k-mer must appear in to be retained                      |
+| `-p INT`   | `--pre INT`        | `10`    | Number of bits used for hash table partitioning (higher values create more partitions) |
+| `-f INT`   | `--filt-type INT`  | `2`     | Filter type for k-mer counting                                                         |
+| `-K INT`   | `--chunk-size INT` | `1.9g`  | Input chunk size used for streaming genomes                                            |
+| `-t INT`   | `--threads INT`    | `4`     | Number of worker threads                                                               |
+| `-w`       | `--write_info`     | off     | Write positions of all pangenome hits to the INFO field of the output VCF              |
+| `-r FILE`  | `--ref FILE`       | —       | Reference genome used to define SNP-mers                                               |
+| `-a FILE`  | `--snps FILE`      | —       | Output TSV containing pangenome SNP-mer counts                                         |
+| `-o FILE`  | `--output FILE`    | —       | Output VCF containing genome-specific SNPs                                             |
+| `-v`       | `--verbose`        | off     | Enable verbose logging                                                                 |
+
 
 #### SNP filtering (`-f`)
 

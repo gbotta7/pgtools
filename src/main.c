@@ -19,29 +19,31 @@ int main_count(int argc, char *argv[])
 
 	static ko_longopt_t long_opts[] = {
         { "kmer", ko_required_argument, 301 },
-        { "min-freq", ko_required_argument, 302 },
+        { "min_freq", ko_required_argument, 302 },
         { "pre", ko_required_argument, 303 },
-        { "filt-type", ko_required_argument, 304 },
-        { "chunk-size", ko_required_argument, 305 },
+        { "filt_type", ko_required_argument, 304 },
+        { "chunk_size", ko_required_argument, 305 },
         { "threads", ko_required_argument, 306 },
-		{ "ref", ko_required_argument, 307 },
-        { "snps", ko_required_argument, 308 },
-		{ "output", ko_required_argument, 309 },
-        { "verbose", ko_no_argument, 310 },
+		{ "write_info", ko_no_argument, 307 },
+		{ "ref", ko_required_argument, 308 },
+        { "snps", ko_required_argument, 309 },
+		{ "output", ko_required_argument, 310 },
+        { "verbose", ko_no_argument, 311 },
         { 0, 0, 0 }
     };
 
-	while ((c = ketopt(&o, argc, argv, 1, "k:m:p:f:K:t:r:a:o:v", long_opts)) >= 0) {
+	while ((c = ketopt(&o, argc, argv, 1, "k:m:p:f:K:t:w:r:a:o:v", long_opts)) >= 0) {
         if      (c == 'k' || c == 301) opt.k = atoi(o.arg);
         else if (c == 'm' || c == 302) opt.min_freq = atof(o.arg);
         else if (c == 'p' || c == 303) opt.pre = atoi(o.arg);
         else if (c == 'f' || c == 304) opt.filt_type = atoi(o.arg);
         else if (c == 'K' || c == 305) opt.chunk_size = mm_parse_num(o.arg);
         else if (c == 't' || c == 306) opt.n_threads = atoi(o.arg);
-		else if (c == 'r' || c == 307) ref_fn = o.arg;
-        else if (c == 'a' || c == 308) fn_snps = o.arg;
-		else if (c == 'o' || c == 309) fn_out = o.arg;
-        else if (c == 'v' || c == 310) opt.verbose = 1;
+		else if (c == 'w' || c == 307) opt.write_info = 1;
+		else if (c == 'r' || c == 308) ref_fn = o.arg;
+        else if (c == 'a' || c == 309) fn_snps = o.arg;
+		else if (c == 'o' || c == 310) fn_out = o.arg;
+        else if (c == 'v' || c == 311) opt.verbose = 1;
     }
 
 	if (argc - o.ind < 1) {
@@ -55,6 +57,7 @@ int main_count(int argc, char *argv[])
 		fprintf(stderr, "  %-10s number of worker threads [%d]\n",
 				"-t INT",  opt.n_threads);
 		fprintf(stderr, "  %-10s chunk size [1.9g]\n",          "-K INT");
+		fprintf(stderr, "  %-10s writing all hits in the pangenome in the info field\n",          "-K INT");
 		fprintf(stderr, "  %-10s path of the reference genome\n","-r FILE");
 		fprintf(stderr, "  %-10s verbose output\n",             "-v");
 		fprintf(stderr, "  %-10s output pangenome SNP-mers\n",  "-a FILE");
