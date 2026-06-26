@@ -32,7 +32,7 @@ int main_count(int argc, char *argv[])
         { 0, 0, 0 }
     };
 
-	while ((c = ketopt(&o, argc, argv, 1, "k:m:p:f:K:t:w:r:a:o:v", long_opts)) >= 0) {
+	while ((c = ketopt(&o, argc, argv, 1, "k:m:p:f:K:t:wr:a:o:v", long_opts)) >= 0) {
         if      (c == 'k' || c == 301) opt.k = atoi(o.arg);
         else if (c == 'm' || c == 302) opt.min_freq = atof(o.arg);
         else if (c == 'p' || c == 303) opt.pre = atoi(o.arg);

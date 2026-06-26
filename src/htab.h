@@ -25,11 +25,11 @@
 #define k_val_pgnm_count2(v) (((v) >> (K_PGNM_COUNTER_BITS/2)) & ((1U << K_PGNM_COUNTER_BITS/2) - 1)) 
 #define k_val_pgnm_count1(v) ((v) & ((1U << K_PGNM_COUNTER_BITS/2) - 1))
 
-#define k_val_pack(cnt2, cnt1, filt, snp2, snp1, cb2, cb1, pgnm_cnt2, pgnm_cnt1) (((cnt2) << (K_VAL_INFO_BITS + K_PGNM_COUNTER_BITS + K_GNM_COUNTER_BITS/2))| ((cnt1) << (K_VAL_INFO_BITS + K_PGNM_COUNTER_BITS)) | ((filt) << (K_PGNM_COUNTER_BITS + 6)) | ((snp2) << (K_PGNM_COUNTER_BITS + 5)) | ((snp1) << (K_PGNM_COUNTER_BITS + 4)) | ((cb2) << (K_PGNM_COUNTER_BITS + 2)) | ((cb1) << K_PGNM_COUNTER_BITS) | ((pgnm_cnt2) << (K_PGNM_COUNTER_BITS/2)) | (pgnm_cnt1))
+#define k_val_pack(cnt2, cnt1, filt, snp2, snp1, cb2, cb1, pgnm_cnt2, pgnm_cnt1) (((cnt2) << (K_VAL_INFO_BITS + K_PGNM_COUNTER_BITS + K_GNM_COUNTER_BITS/2)) | ((cnt1) << (K_VAL_INFO_BITS + K_PGNM_COUNTER_BITS)) | ((filt) << (K_PGNM_COUNTER_BITS + 6)) | ((snp2) << (K_PGNM_COUNTER_BITS + 5)) | ((snp1) << (K_PGNM_COUNTER_BITS + 4)) | ((cb2) << (K_PGNM_COUNTER_BITS + 2)) | ((cb1) << K_PGNM_COUNTER_BITS) | ((pgnm_cnt2) << (K_PGNM_COUNTER_BITS/2)) | (pgnm_cnt1))
 
 // define the snpmer hash table value
 #define S_VAL_INFO_BITS 6
-#define S_COUNTER_BITS (32 - S_VAL_INFO_BITS)
+#define S_COUNTER_BITS (32 - (S_VAL_INFO_BITS))
 #define S_COUNTER_MAX ((1U << S_COUNTER_BITS/2) - 1)
 
 #define s_val_count2(v) ((v) >> (S_VAL_INFO_BITS + S_COUNTER_BITS/2))
@@ -41,15 +41,21 @@
 
 #define s_val_pack(cnt2, cnt1, snp2, snp1, cb2, cb1) (((cnt2) << (S_VAL_INFO_BITS + S_COUNTER_BITS/2))| ((cnt1) << S_VAL_INFO_BITS) | ((snp2) << 5) | ((snp1) << 4) | ((cb2) << 2) | (cb1));
 
-#define M_COUNTER_BITS 16
-#define M_COUNTER_MAX ((1U << M_COUNTER_BITS) - 1)
+// define the snpmer hash table value
+#define M_POS_BITS 31
+#define M_POS_MAX ((1U << M_POS_BITS) - 1)
 
-typedef struct __attribute__((packed)) {
+#define m_val_pos(v) (((v) >> 1) & 0x7FFFFFFFU)
+#define m_val_strand(v) ((v) & 0x1U)
+
+#define m_postrand_pack(pos, strand) (((pos) << 1) | (strand))
+
+typedef struct {
 	uint64_t h_flanks;
-    int idx;    // index of the contig
-    int pos;
-	uint8_t cb; // stores central base of k-mer and SNP information
-    char strand;
+    uint32_t pos;
+    uint16_t idx;       // index of the contig
+    uint8_t strand;
+	uint8_t cb;         // stores central base of k-mer and SNP information
 } s_ch_seq_t;
 
 typedef struct __attribute__((packed)) {
@@ -69,9 +75,8 @@ typedef struct { // terminal options
 } pg_opt_t;
 
 typedef struct {
-    int pos;
-    int seq_idx;
-    char strand;
+    uint32_t postrand; // 1 bit for strand, and 31 for pos
+    uint16_t seq_idx;
 } kinfo_entry_t;
 
 typedef struct {
@@ -123,7 +128,7 @@ void pg_dump_snps(const char *fn, pg_mht_t *h);
 
 void pg_mht_rearrange(pg_mht_t *h, long i);
 void write_vcf(const char *out_fn, pg_mht_t *h, pg_mht_t *ref_h, char *gnm_fn, int write_info);
-void merge_vcfs(const char *out_fn, const char *tmpdir, int n_fns, int n_snps);
+void merge_vcfs(const char *out_fn, const char *tmpdir, int n_fns, int n_snps, int ref_idx);
 
 pg_mht_t *pg_count(const char **fns, const int n_fns, const pg_opt_t *opt, const char *out);
 void pg_findsnp(const char **fns, const int n_fns, int64_t n_snps, const pg_opt_t *opt, pg_mht_t *h, const char *ref_fn, const char *out_fn);

@@ -369,8 +369,7 @@ void pg_mht_count_list(pg_mht_t *h, int n, const s_ch_seq_t *a)
 			info->n = 1;
 			info->m = 1;
 			MALLOC(info->i, 1);
-			info->i[0].pos = a[j].pos;
-			info->i[0].strand = a[j].strand;
+			info->i[0].postrand = m_postrand_pack(a[j].pos, a[j].strand);
 			info->i[0].seq_idx = a[j].idx;
 		} else {
 			if (info->n == info->m) {
@@ -378,8 +377,7 @@ void pg_mht_count_list(pg_mht_t *h, int n, const s_ch_seq_t *a)
 				REALLOC(info->i, info->m);
 			}
 			int n = info->n++;
-			info->i[n].pos = a[j].pos;
-			info->i[n].strand = a[j].strand;
+			info->i[n].postrand = m_postrand_pack(a[j].pos, a[j].strand);
 			info->i[n].seq_idx = a[j].idx;
 		}
 
@@ -435,11 +433,12 @@ void write_vcf(const char *out_fn, pg_mht_t *h, pg_mht_t *ref_h, char *gnm_fn, i
     }
 
     // VCF header
-    fprintf(fp,
-		"##fileformat=VCFv4.2\n"
-		"##INFO=<ID=KPOS,Number=1,Type=String,Description=\"K-mer positions: genome|strand|pos,... per genome separated by ;\">\n"
-		"##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n"
-		"##FORMAT=<ID=KC,Number=2,Type=Integer,Description=\"K-mer counts for REF and ALT alleles\">\n");
+	fprintf(fp,
+			"##fileformat=VCFv4.2\n"
+			"##source=pgtools\n"
+			"##INFO=<ID=KPOS,Number=1,Type=String,Description=\"K-mer hit positions across the pangenome, formatted as contig|strand|pos. Multiple hits across the pangenome are comma-separated. Strand is + or - relative to each genome, position is always reported relative to the + strand.\">\n"
+			"##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Haplotype genotype call based on k-mer presence: 0=REF allele only, 1=ALT allele only, .=ambiguous (both or neither allele k-mers found; inspect KC for counts).\">\n"
+			"##FORMAT=<ID=KC,Number=2,Type=Integer,Description=\"K-mer counts for the REF and ALT alleles respectively. Non zero counts on both alleles (GT=.) may indicate a copy number variant or a repetitive region.\">\n");
 	
 
 	// collect unique contigs with a hash table
@@ -473,47 +472,92 @@ void write_vcf(const char *out_fn, pg_mht_t *h, pg_mht_t *ref_h, char *gnm_fn, i
 	fprintf(fp, "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t%s\n", sample_name);
 
 	// VCF content
-	char *chrom_name;
-	int target_pos;
+	char *ref_chrom_name;
+	int ref_pos;
+	int ref_strand;
+	uint32_t cnt_ref;
+	uint32_t cnt_alt;
     for (int i = 0; i < 1<<h->pre; ++i) {
         pg_ht1_t *g = &h->h[i];
 		pg_im1_t *m = &h->m[i];
+		pg_ht1_t *ref_g = &ref_h->h[i];
 		pg_im1_t *ref_m = &ref_h->m[i];
         khint_t k;
 
         for (k = 0; k < kh_end(g->h); ++k) {
             if (!kh_exist(g->h, k)) continue;
 
+			uint64_t key = kh_key(g->h, k);
+
+			// find the reference allele
+			khint_t k_ref = pg_ht_get(ref_g->h, key);
+			uint32_t v_ref = kh_val(ref_g->h, k_ref);
+			uint32_t cb1_ref = s_val_cb1(v_ref);
+			uint32_t cb2_ref = s_val_cb2(v_ref);
+			uint32_t cnt1_ref = s_val_count1(v_ref);
+            uint32_t cnt2_ref = s_val_count2(v_ref);
+
+			uint32_t cb_ref;
+			if (cnt1_ref > cnt2_ref) { // keep as a reference the one that appear more frequently if both appear
+				cb_ref = cb1_ref;
+			} else {
+				cb_ref = cb2_ref;
+			}
+
             uint32_t v = kh_val(g->h, k);
             uint32_t cb1 = s_val_cb1(v);
             uint32_t cb2 = s_val_cb2(v);
             uint32_t cnt1 = s_val_count1(v);
-            uint32_t cnt2 = s_val_count2(v); /// ADD REF HERE SO YOU KNOW WHICH ONE IS THE REF
-
-            char ref = nt4_seq_table[cb1];
-            char alt = nt4_seq_table[cb2];
-
-            const char *gt;
-			if (cnt1 > 0 && cnt2 == 0) gt = "0";
-			else if (cnt1 == 0 && cnt2 > 0) gt = "1";
-			else gt = ".";
-
-			// get CHROM/POS from reference info map
-			uint64_t key = kh_key(g->h, k);
-			chrom_name = ".";
-			target_pos = 0;
+            uint32_t cnt2 = s_val_count2(v);
+			
+			// get CHROM/POS and strand from reference info map
+			ref_chrom_name = ".";
+			ref_pos = 0;
+			ref_strand = 0;
 			khint_t ref_info_k = pg_im_get(ref_m->m, key);
 			if (ref_info_k != kh_end(ref_m->m)) {
 				kinfo_t *ref_occ = &kh_val(ref_m->m, ref_info_k);
 				if (ref_occ->n > 0) {
-					chrom_name = ref_h->cnames.names[ref_occ->i[0].seq_idx];
-					target_pos = ref_occ->i[0].pos;
+					ref_chrom_name = ref_h->cnames.names[ref_occ->i[0].seq_idx];
+					ref_pos = m_val_pos(ref_occ->i[0].postrand);
+					ref_strand = m_val_strand(ref_occ->i[0].postrand);
 				}
 			}
+			
+			// get REF/ALT based on ref_strand
+			char ref, alt;
+			const char *gt;
+			if (cb1 == cb_ref) {
+				if (ref_strand) { // already on forward strand
+					ref = nt4_seq_table[cb1];
+					alt = nt4_seq_table[cb2];
+				} else { // on reverse strand, change it for VCF standard
+					ref = nt4_seq_table[3 - cb1];
+					alt = nt4_seq_table[3 - cb2];
+				}
+				cnt_ref = cnt1;
+				cnt_alt = cnt2;
+			} else {
+				if (ref_strand) { // already on forward strand
+					ref = nt4_seq_table[cb2];
+					alt = nt4_seq_table[cb1];
+				} else { // on reverse strand, change it for VCF standard
+					ref = nt4_seq_table[3 - cb2];
+					alt = nt4_seq_table[3 - cb1];
+				}
+				cnt_ref = cnt2;
+				cnt_alt = cnt1;
+			}
+			
+			// build GT field
+			if (cnt_ref > 0 && cnt_alt == 0) gt = "0";
+				else if (cnt_ref == 0 && cnt_alt > 0) gt = "1";
+				else gt = ".";
 
 			// build INFO field: seq_name,strand,pos;seq_name,strand,pos;...
 			char info[65536];
 			int info_len = 0;
+			char info_strand;
 
 			if (write_info) {
 				khint_t info_k = pg_im_get(m->m, key);
@@ -522,18 +566,37 @@ void write_vcf(const char *out_fn, pg_mht_t *h, pg_mht_t *ref_h, char *gnm_fn, i
 					for (int j = 0; j < occ->n; ++j) {
 						const char *name = h->cnames.names[occ->i[j].seq_idx];
 						khint_t ref_seen_k = strset_get(seen, name);
-						if (ref_seen_k != kh_end(seen) && occ->n == 1) {
+						if (ref_seen_k != kh_end(seen) && occ->n == 1) { // reference genome, one occurrence
 							info[0] = '.'; info[1] = '\0'; info_len = 1;
-						} else if (ref_seen_k != kh_end(seen) && occ->n > 1) {
+						} else if (ref_seen_k != kh_end(seen) && occ->n > 1) { // reference genome, multiple occurrences
 							if (j) {
+								if (ref_strand) { // already on forward strand
+									info_strand = m_val_strand(occ->i[j].postrand) ? '+' : '-';
+								} else { // on reverse strand, change it for VCF standard
+									info_strand = !m_val_strand(occ->i[j].postrand) ? '+' : '-';
+								}
 								info_len += snprintf(info + info_len, sizeof(info) - info_len,
 													"%s|%c|%d,",
-													name, occ->i[j].strand, occ->i[j].pos);
+													name, info_strand, m_val_pos(occ->i[j].postrand));
 							}
-						} else {
+						} else if (ref_seen_k == kh_end(seen) && occ->n == 1) { // not reference genome, one occurrence
+							if (ref_strand) { // already on forward strand
+								info_strand = m_val_strand(occ->i[j].postrand) ? '+' : '-';
+							} else { // on reverse strand, change it for VCF standard
+								info_strand = !m_val_strand(occ->i[j].postrand) ? '+' : '-';
+							}
 							info_len += snprintf(info + info_len, sizeof(info) - info_len,
 												"%s|%c|%d,",
-												name, occ->i[j].strand, occ->i[j].pos);
+												name, info_strand, m_val_pos(occ->i[j].postrand));
+						} else { // not reference genome, multiple occurrences
+							if (ref_strand) { // already on forward strand
+								info_strand = m_val_strand(occ->i[j].postrand) ? '+' : '-';
+							} else { // on reverse strand, change it for VCF standard
+								info_strand = !m_val_strand(occ->i[j].postrand) ? '+' : '-';
+							}
+							info_len += snprintf(info + info_len, sizeof(info) - info_len,
+												"%s|%c|%d,",
+												name, info_strand, m_val_pos(occ->i[j].postrand));
 						}
 					}
 				}
@@ -550,8 +613,8 @@ void write_vcf(const char *out_fn, pg_mht_t *h, pg_mht_t *ref_h, char *gnm_fn, i
 
             fprintf(fp,
 					"%s\t%d\t.\t%c\t%c\t.\t.\t%s\tGT:KC\t%s:%u,%u\n",
-					chrom_name, target_pos, ref, alt,
-					info, gt, cnt1, cnt2);
+					ref_chrom_name, ref_pos, ref, alt,
+					info, gt, cnt_ref, cnt_alt);
 		}
     }
 
@@ -559,7 +622,136 @@ void write_vcf(const char *out_fn, pg_mht_t *h, pg_mht_t *ref_h, char *gnm_fn, i
     fclose(fp);
 }
 
-void merge_vcfs(const char *out_fn, const char *tmpdir, int n_fns, int n_snps)
+// void merge_vcfs(const char *out_fn, const char *tmpdir, int n_fns, int n_snps, int ref_idx)
+// {
+//     FILE **fps = malloc(n_fns * sizeof(FILE*));
+//     for (int i = 0; i < n_fns; ++i) {
+//         char p[4096];
+//         snprintf(p, sizeof p, "%s/gnm.%d.vcf", tmpdir, i);
+//         fps[i] = fopen(p, "r");
+//         if (!fps[i])
+//             fprintf(stderr, "[M::%s] Failed to open '%s'\n", __func__, p);
+//     }
+
+// 	FILE *out;
+// 	if ((out = strcmp(out_fn, "-") ? fopen(out_fn, "wb") : stdout) == 0)
+// 		return;
+
+//     // VCF header — meta-lines from file 0 only
+//     char **sample_names = malloc(n_fns * sizeof(char*));
+//     char line[65536];
+//     for (int i = 0; i < n_fns; ++i) {
+//         sample_names[i] = NULL;
+//         while (fgets(line, sizeof line, fps[i])) {
+//             if (strncmp(line, "#CHROM", 6) == 0) {
+//                 char *tok = strrchr(line, '\t');
+//                 if (tok) {
+//                     tok++;
+//                     tok[strcspn(tok, "\n")] = '\0';
+//                     sample_names[i] = strdup(tok);
+//                 }
+//                 break;
+//             }
+//             if (i == 0 && line[0] == '#')
+//                 fputs(line, out);
+//         }
+//     }
+
+//     fprintf(out, "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT");
+//     for (int i = 0; i < n_fns; ++i)
+//         fprintf(out, "\t%s", sample_names[i] ? sample_names[i] : "UNKNOWN");
+//     fprintf(out, "\n");
+
+//     // VCF content
+//     char **lines = malloc(n_fns * sizeof(char*));
+//     for (int i = 0; i < n_fns; ++i)
+//         lines[i] = malloc(65536);
+
+//     for (int s = 0; s < n_snps; ++s) {
+//         for (int i = 0; i < n_fns; ++i) {
+//             if (!fps[i] || !fgets(lines[i], 65536, fps[i]))
+//                 lines[i][0] = '\0';
+//             lines[i][strcspn(lines[i], "\n")] = '\0';
+//         }
+
+//         char *p = lines[0];
+//         char *fields[10] = {0};
+//         char *tmp = lines[0];
+//         int fc = 0;
+//         fields[fc++] = tmp;
+//         for (char *c = tmp; *c && fc < 10; ++c) {
+//             if (*c == '\t') {
+//                 *c = '\0';
+//                 fields[fc++] = c + 1;
+//             }
+//         }
+
+//         // merge INFO from all files, stripping KPOS= prefix and re-adding once
+//         char merged_info[65536];
+//         int info_len = 0;
+//         for (int i = 0; i < n_fns; ++i) {
+//             char *sp = lines[i];
+//             int tc = 0;
+//             char *info_start = NULL, *info_end = NULL;
+//             for (char *c = sp; *c; ++c) {
+//                 if (*c == '\t') {
+//                     ++tc;
+//                     if (tc == 7) info_start = c + 1;
+//                     if (tc == 8) { info_end = c; break; }
+//                 }
+//             }
+//             if (info_start && info_end && info_end > info_start) {
+//                 // strip KPOS= prefix
+//                 if (strncmp(info_start, "KPOS=", 5) == 0) info_start += 5;
+//                 int len = info_end - info_start;
+//                 if (!(len == 1 && *info_start == '.')) {
+//                     if (info_len > 0) merged_info[info_len++] = ',';
+//                     memcpy(merged_info + info_len, info_start, len);
+//                     info_len += len;
+//                 }
+//             }
+//         }
+//         if (info_len == 0) { merged_info[0] = '.'; merged_info[1] = '\0'; }
+//         else merged_info[info_len] = '\0';
+
+//         // write output line with KPOS= prefix on merged INFO
+//         if (merged_info[0] == '.')
+//             fprintf(out, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t.\t%s\t%s",
+//                     fields[0], fields[1], fields[2], fields[3],
+//                     fields[4], fields[5], fields[6],
+//                     fields[8], fields[9]);
+//         else
+//             fprintf(out, "%s\t%s\t%s\t%s\t%s\t%s\t%s\tKPOS=%s\t%s\t%s",
+//                     fields[0], fields[1], fields[2], fields[3],
+//                     fields[4], fields[5], fields[6],
+//                     merged_info, fields[8], fields[9]);
+
+//         // append sample columns from remaining files
+//         for (int i = 0; i < n_fns; ++i) {
+// 			char *sp = lines[i];
+// 			int tc = 0;
+// 			for (char *c = sp; *c; ++c) {
+// 				if (*c == '\t' && ++tc == 9) {
+// 					fprintf(out, "\t%s", c + 1);
+// 					break;
+// 				}
+// 			}
+//         }
+//         fprintf(out, "\n");
+//     }
+
+//     for (int i = 0; i < n_fns; ++i) {
+//         if (fps[i]) fclose(fps[i]);
+//         free(lines[i]);
+//         free(sample_names[i]);
+//     }
+//     free(fps); free(lines); free(sample_names);
+
+// 	if (out && out != stdout)
+//         fclose(out);
+// }
+
+void merge_vcfs(const char *out_fn, const char *tmpdir, int n_fns, int n_snps, int ref_idx)
 {
     FILE **fps = malloc(n_fns * sizeof(FILE*));
     for (int i = 0; i < n_fns; ++i) {
@@ -570,9 +762,9 @@ void merge_vcfs(const char *out_fn, const char *tmpdir, int n_fns, int n_snps)
             fprintf(stderr, "[M::%s] Failed to open '%s'\n", __func__, p);
     }
 
-	FILE *out;
-	if ((out = strcmp(out_fn, "-") ? fopen(out_fn, "wb") : stdout) == 0)
-		return -1;
+    FILE *out;
+    if ((out = strcmp(out_fn, "-") ? fopen(out_fn, "wb") : stdout) == 0)
+        return;
 
     // VCF header — meta-lines from file 0 only
     char **sample_names = malloc(n_fns * sizeof(char*));
@@ -611,19 +803,7 @@ void merge_vcfs(const char *out_fn, const char *tmpdir, int n_fns, int n_snps)
             lines[i][strcspn(lines[i], "\n")] = '\0';
         }
 
-        char *p = lines[0];
-        char *fields[10] = {0};
-        char *tmp = lines[0];
-        int fc = 0;
-        fields[fc++] = tmp;
-        for (char *c = tmp; *c && fc < 10; ++c) {
-            if (*c == '\t') {
-                *c = '\0';
-                fields[fc++] = c + 1;
-            }
-        }
-
-        // merge INFO from all files, stripping KPOS= prefix and re-adding once
+        // merge INFO from all files first, before lines[0] is modified by fields parsing
         char merged_info[65536];
         int info_len = 0;
         for (int i = 0; i < n_fns; ++i) {
@@ -638,7 +818,6 @@ void merge_vcfs(const char *out_fn, const char *tmpdir, int n_fns, int n_snps)
                 }
             }
             if (info_start && info_end && info_end > info_start) {
-                // strip KPOS= prefix
                 if (strncmp(info_start, "KPOS=", 5) == 0) info_start += 5;
                 int len = info_end - info_start;
                 if (!(len == 1 && *info_start == '.')) {
@@ -651,20 +830,30 @@ void merge_vcfs(const char *out_fn, const char *tmpdir, int n_fns, int n_snps)
         if (info_len == 0) { merged_info[0] = '.'; merged_info[1] = '\0'; }
         else merged_info[info_len] = '\0';
 
-        // write output line with KPOS= prefix on merged INFO
-        if (merged_info[0] == '.')
-            fprintf(out, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t.\t%s\t%s",
-                    fields[0], fields[1], fields[2], fields[3],
-                    fields[4], fields[5], fields[6],
-                    fields[8], fields[9]);
-        else
-            fprintf(out, "%s\t%s\t%s\t%s\t%s\t%s\t%s\tKPOS=%s\t%s\t%s",
-                    fields[0], fields[1], fields[2], fields[3],
-                    fields[4], fields[5], fields[6],
-                    merged_info, fields[8], fields[9]);
+        // parse fixed fields from lines[0] (modifies lines[0] in place)
+        char *fields[10] = {0};
+        char *tmp = lines[0];
+        int fc = 0;
+        fields[fc++] = tmp;
+        for (char *c = tmp; *c && fc < 10; ++c) {
+            if (*c == '\t') {
+                *c = '\0';
+                fields[fc++] = c + 1;
+            }
+        }
 
-        // append sample columns from remaining files
-        for (int i = 1; i < n_fns; ++i) {
+        // write CHROM..FILTER, INFO, FORMAT
+        if (merged_info[0] == '.')
+            fprintf(out, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t.\t%s",
+                    fields[0], fields[1], fields[2], fields[3],
+                    fields[4], fields[5], fields[6], fields[8]);
+        else
+            fprintf(out, "%s\t%s\t%s\t%s\t%s\t%s\t%s\tKPOS=%s\t%s",
+                    fields[0], fields[1], fields[2], fields[3],
+                    fields[4], fields[5], fields[6], merged_info, fields[8]);
+
+        // append all sample columns
+        for (int i = 0; i < n_fns; ++i) {
             char *sp = lines[i];
             int tc = 0;
             for (char *c = sp; *c; ++c) {
@@ -684,6 +873,6 @@ void merge_vcfs(const char *out_fn, const char *tmpdir, int n_fns, int n_snps)
     }
     free(fps); free(lines); free(sample_names);
 
-	if (out && out != stdout)
+    if (out && out != stdout)
         fclose(out);
 }
