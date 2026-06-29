@@ -89,7 +89,7 @@ pgtools count -k31 -m0.98 -t12 \
 | `-t INT`   | `--threads INT`    | `4`     | Number of worker threads                                                               |
 | `-w`       | `--write_info`     | off     | Write positions of all pangenome hits to the INFO field of the output VCF              |
 | `-r FILE`  | `--ref FILE`       | —       | Reference genome used to define SNP-mers                                               |
-| `-a FILE`  | `--snps FILE`      | —       | Output TSV containing pangenome SNP-mer counts                                         |
+| `-a FILE`  | `--snps FILE`      | —       | Output TSV containing pangenome canonical SNP-mers counts                                         |
 | `-o FILE`  | `--output FILE`    | —       | Output VCF containing genome-specific SNPs                                             |
 | `-v`       | `--verbose`        | off     | Enable verbose logging                                                                 |
 
