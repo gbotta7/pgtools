@@ -112,14 +112,6 @@ static void count_seq_buf(ch_buf_t *buf, pldat_t *p, int len, const char *seq, i
 				uint64_t flanks = (y & ((1ULL<<(p->opt->k/2)*2)-1))          			// right flank from raw y
 								| ((y >> ((p->opt->k/2+1)*2)) << ((p->opt->k/2)*2)); 	// left flank from raw y
 				uint8_t strand = x[0] < x[1] ? 1 : 0;
-
-                // in snp pass: skip immediately if not in hash table (so buf does not grow)
-				// uint64_t hflanks = pg_hash64(flanks, hash_mask);
-                // if (p->snp || p->filt) {
-                //     uint64_t key = hflanks >> p->opt->pre;
-                //     pg_ht1_t *g = &p->h->h[hflanks & ((1<<p->opt->pre) - 1)];
-                //     if (pg_ht_get(g->h, key) == kh_end(g->h)) continue;
-                // }
 			
 				ch_insert_buf(buf, p, pg_hash64(flanks, hash_mask), center, (uint32_t)i-p->opt->k/2, cname_idx, strand); // i-k/2 is the 0-based position of center
 			}
