@@ -621,6 +621,132 @@ void write_vcf(const char *out_fn, pg_mht_t *h, pg_mht_t *ref_h, char *gnm_fn, i
     fclose(fp);
 }
 
+// void merge_vcfs(const char *out_fn, const char *tmpdir, int n_fns, int n_snps, int ref_idx)
+// {
+//     FILE **fps = malloc(n_fns * sizeof(FILE*));
+//     for (int i = 0; i < n_fns; ++i) {
+//         char p[4096];
+//         snprintf(p, sizeof p, "%s/gnm.%d.vcf", tmpdir, i);
+//         fps[i] = fopen(p, "r");
+//         if (!fps[i])
+//             fprintf(stderr, "[M::%s] Failed to open '%s'\n", __func__, p);
+//     }
+
+//     FILE *out;
+//     if ((out = strcmp(out_fn, "-") ? fopen(out_fn, "wb") : stdout) == 0)
+//         return;
+
+//     // VCF header — meta-lines from file 0 only
+//     char **sample_names = malloc(n_fns * sizeof(char*));
+//     char line[65536];
+//     for (int i = 0; i < n_fns; ++i) {
+//         sample_names[i] = NULL;
+//         while (fgets(line, sizeof line, fps[i])) {
+//             if (strncmp(line, "#CHROM", 6) == 0) {
+//                 char *tok = strrchr(line, '\t');
+//                 if (tok) {
+//                     tok++;
+//                     tok[strcspn(tok, "\n")] = '\0';
+//                     sample_names[i] = strdup(tok);
+//                 }
+//                 break;
+//             }
+//             if (i == 0 && line[0] == '#')
+//                 fputs(line, out);
+//         }
+//     }
+
+//     fprintf(out, "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT");
+//     for (int i = 0; i < n_fns; ++i)
+//         fprintf(out, "\t%s", sample_names[i] ? sample_names[i] : "UNKNOWN");
+//     fprintf(out, "\n");
+
+//     // VCF content
+//     char **lines = malloc(n_fns * sizeof(char*));
+//     for (int i = 0; i < n_fns; ++i)
+//         lines[i] = malloc(65536);
+
+//     for (int s = 0; s < n_snps; ++s) {
+//         for (int i = 0; i < n_fns; ++i) {
+//             if (!fps[i] || !fgets(lines[i], 65536, fps[i]))
+//                 lines[i][0] = '\0';
+//             lines[i][strcspn(lines[i], "\n")] = '\0';
+//         }
+
+//         // merge INFO from all files first, before lines[0] is modified by fields parsing
+//         char merged_info[65536];
+//         int info_len = 0;
+//         for (int i = 0; i < n_fns; ++i) {
+//             char *sp = lines[i];
+//             int tc = 0;
+//             char *info_start = NULL, *info_end = NULL;
+//             for (char *c = sp; *c; ++c) {
+//                 if (*c == '\t') {
+//                     ++tc;
+//                     if (tc == 7) info_start = c + 1;
+//                     if (tc == 8) { info_end = c; break; }
+//                 }
+//             }
+//             if (info_start && info_end && info_end > info_start) {
+//                 if (strncmp(info_start, "KPOS=", 5) == 0) info_start += 5;
+//                 int len = info_end - info_start;
+//                 if (!(len == 1 && *info_start == '.')) {
+//                     if (info_len > 0) merged_info[info_len++] = ',';
+//                     memcpy(merged_info + info_len, info_start, len);
+//                     info_len += len;
+//                 }
+//             }
+//         }
+//         if (info_len == 0) { merged_info[0] = '.'; merged_info[1] = '\0'; }
+//         else merged_info[info_len] = '\0';
+
+//         // parse fixed fields from lines[0] (modifies lines[0] in place)
+//         char *fields[10] = {0};
+//         char *tmp = lines[0];
+//         int fc = 0;
+//         fields[fc++] = tmp;
+//         for (char *c = tmp; *c && fc < 10; ++c) {
+//             if (*c == '\t') {
+//                 *c = '\0';
+//                 fields[fc++] = c + 1;
+//             }
+//         }
+
+//         // write CHROM..FILTER, INFO, FORMAT
+//         if (merged_info[0] == '.')
+//             fprintf(out, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t.\t%s",
+//                     fields[0], fields[1], fields[2], fields[3],
+//                     fields[4], fields[5], fields[6], fields[8]);
+//         else
+//             fprintf(out, "%s\t%s\t%s\t%s\t%s\t%s\t%s\tKPOS=%s\t%s",
+//                     fields[0], fields[1], fields[2], fields[3],
+//                     fields[4], fields[5], fields[6], merged_info, fields[8]);
+
+//         // append all sample columns
+//         for (int i = 0; i < n_fns; ++i) {
+//             char *sp = lines[i];
+//             int tc = 0;
+//             for (char *c = sp; *c; ++c) {
+//                 if (*c == '\t' && ++tc == 9) {
+//                     fprintf(out, "\t%s", c + 1);
+//                     break;
+//                 }
+//             }
+//         }
+//         fprintf(out, "\n");
+//     }
+
+//     for (int i = 0; i < n_fns; ++i) {
+//         if (fps[i]) fclose(fps[i]);
+//         free(lines[i]);
+//         free(sample_names[i]);
+//     }
+//     free(fps); free(lines); free(sample_names);
+
+//     if (out && out != stdout)
+//         fclose(out);
+// }
+
 void merge_vcfs(const char *out_fn, const char *tmpdir, int n_fns, int n_snps, int ref_idx)
 {
     FILE **fps = malloc(n_fns * sizeof(FILE*));
@@ -700,6 +826,18 @@ void merge_vcfs(const char *out_fn, const char *tmpdir, int n_fns, int n_snps, i
         if (info_len == 0) { merged_info[0] = '.'; merged_info[1] = '\0'; }
         else merged_info[info_len] = '\0';
 
+        // extract sample 0's GT pointer before lines[0] is destroyed
+        char *sample0_gt = NULL;
+        {
+            int tc = 0;
+            for (char *c = lines[0]; *c; ++c) {
+                if (*c == '\t' && ++tc == 9) {
+                    sample0_gt = c + 1;
+                    break;
+                }
+            }
+        }
+
         // parse fixed fields from lines[0] (modifies lines[0] in place)
         char *fields[10] = {0};
         char *tmp = lines[0];
@@ -722,8 +860,12 @@ void merge_vcfs(const char *out_fn, const char *tmpdir, int n_fns, int n_snps, i
                     fields[0], fields[1], fields[2], fields[3],
                     fields[4], fields[5], fields[6], merged_info, fields[8]);
 
-        // append all sample columns
+        // use saved sample0_gt for i==0 instead of re-scanning lines[0]
         for (int i = 0; i < n_fns; ++i) {
+            if (i == 0) {
+                fprintf(out, "\t%s", sample0_gt ? sample0_gt : ".");
+                continue;
+            }
             char *sp = lines[i];
             int tc = 0;
             for (char *c = sp; *c; ++c) {
