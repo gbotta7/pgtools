@@ -107,11 +107,16 @@ static void count_seq_buf(ch_buf_t *buf, pldat_t *p, int len, const char *seq, i
 			x[1] = x[1] >> 2 | (uint64_t)(3 - c) << shift;  // reverse strand
 			if (++l >= p->opt->k) { // we find a k-mer
 				uint64_t y = x[0] < x[1] ? x[0] : x[1];
-				uint64_t center = (y >> ((p->opt->k/2)*2)) & 3;           				// extract center from raw y
-				uint64_t cb = x[0] < x[1] ? center : 3 - center;
-				uint64_t flanks = (y & ((1ULL<<(p->opt->k/2)*2)-1))          			// right flank from raw y
-								| ((y >> ((p->opt->k/2+1)*2)) << ((p->opt->k/2)*2)); 	// left flank from raw y
+				uint64_t y_rev = x[0] < x[1] ? x[1] : x[0];
+				uint64_t center = (y >> ((p->opt->k/2)*2)) & 3;           					// extract center from raw y
+				// uint64_t cb = x[0] < x[1] ? center : 3 - center;
+				uint64_t flanks = (y & ((1ULL<<(p->opt->k/2)*2)-1))          				// right flank from raw y
+								| ((y >> ((p->opt->k/2+1)*2)) << ((p->opt->k/2)*2)); 		// left flank from raw y
+				uint64_t rev_flanks = (y_rev & ((1ULL<<(p->opt->k/2)*2)-1))          		// right flank from raw y
+								| ((y_rev >> ((p->opt->k/2+1)*2)) << ((p->opt->k/2)*2)); 	// left flank from raw y
 				uint8_t strand = x[0] < x[1] ? 1 : 0;
+
+				if (flanks == rev_flanks) continue;
 			
 				ch_insert_buf(buf, p, pg_hash64(flanks, hash_mask), center, (uint32_t)i-p->opt->k/2, cname_idx, strand); // i-k/2 is the 0-based position of center
 			}
