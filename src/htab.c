@@ -1,3 +1,4 @@
+#include <ctype.h>
 #include <math.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -747,6 +748,27 @@ void write_vcf(const char *out_fn, pg_mht_t *h, pg_mht_t *ref_h, char *gnm_fn, i
 //         fclose(out);
 // }
 
+static void count_alleles(const char *gt, int *ac, int n_alt, int *an)
+{
+    const char *p = gt;
+    while (*p) {
+        if (*p == '.') {
+            p++;
+        } else if (isdigit((unsigned char)*p)) {
+            int v = 0;
+            while (isdigit((unsigned char)*p)) { v = v * 10 + (*p - '0'); p++; }
+            (*an)++;
+            if (v >= 1 && v <= n_alt) ac[v - 1]++;
+        } else {
+            p++;
+            continue;
+        }
+		
+        if (*p == '/' || *p == '|') p++;
+        else break;
+    }
+}
+
 void merge_vcfs(const char *out_fn, const char *tmpdir, int n_fns, int n_snps, int ref_idx)
 {
     FILE **fps = malloc(n_fns * sizeof(FILE*));
@@ -782,6 +804,11 @@ void merge_vcfs(const char *out_fn, const char *tmpdir, int n_fns, int n_snps, i
         }
     }
 
+    // INFO header lines for the fields we compute during merge
+    fputs("##INFO=<ID=AC,Number=A,Type=Integer,Description=\"Allele count in genotypes, for each ALT allele\">\n", out);
+    fputs("##INFO=<ID=AN,Number=1,Type=Integer,Description=\"Total number of alleles in called genotypes\">\n", out);
+    fputs("##INFO=<ID=AF,Number=A,Type=Float,Description=\"Allele frequency, for each ALT allele\">\n", out);
+
     fprintf(out, "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT");
     for (int i = 0; i < n_fns; ++i)
         fprintf(out, "\t%s", sample_names[i] ? sample_names[i] : "UNKNOWN");
@@ -792,6 +819,8 @@ void merge_vcfs(const char *out_fn, const char *tmpdir, int n_fns, int n_snps, i
     for (int i = 0; i < n_fns; ++i)
         lines[i] = malloc(65536);
 
+    char **sample_gt = malloc(n_fns * sizeof(char*));
+
     for (int s = 0; s < n_snps; ++s) {
         for (int i = 0; i < n_fns; ++i) {
             if (!fps[i] || !fgets(lines[i], 65536, fps[i]))
@@ -799,7 +828,7 @@ void merge_vcfs(const char *out_fn, const char *tmpdir, int n_fns, int n_snps, i
             lines[i][strcspn(lines[i], "\n")] = '\0';
         }
 
-        // merge INFO from all files first, before lines[0] is modified by fields parsing
+        // merge INFO (KPOS) from all files first, before lines[0] is modified by fields parsing
         char merged_info[65536];
         int info_len = 0;
         for (int i = 0; i < n_fns; ++i) {
@@ -826,13 +855,13 @@ void merge_vcfs(const char *out_fn, const char *tmpdir, int n_fns, int n_snps, i
         if (info_len == 0) { merged_info[0] = '.'; merged_info[1] = '\0'; }
         else merged_info[info_len] = '\0';
 
-        // extract sample 0's GT pointer before lines[0] is destroyed
-        char *sample0_gt = NULL;
-        {
+        // extract each sample's GT pointer before lines[0] is destroyed by fields parsing
+        for (int i = 0; i < n_fns; ++i) {
+            sample_gt[i] = NULL;
             int tc = 0;
-            for (char *c = lines[0]; *c; ++c) {
+            for (char *c = lines[i]; *c; ++c) {
                 if (*c == '\t' && ++tc == 9) {
-                    sample0_gt = c + 1;
+                    sample_gt[i] = c + 1;
                     break;
                 }
             }
@@ -850,34 +879,47 @@ void merge_vcfs(const char *out_fn, const char *tmpdir, int n_fns, int n_snps, i
             }
         }
 
-        // write CHROM..FILTER, INFO, FORMAT
-        if (merged_info[0] == '.')
-            fprintf(out, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t.\t%s",
-                    fields[0], fields[1], fields[2], fields[3],
-                    fields[4], fields[5], fields[6], fields[8]);
-        else
-            fprintf(out, "%s\t%s\t%s\t%s\t%s\t%s\t%s\tKPOS=%s\t%s",
-                    fields[0], fields[1], fields[2], fields[3],
-                    fields[4], fields[5], fields[6], merged_info, fields[8]);
+        // number of ALT alleles, from the ALT field
+        int n_alt = 1;
+        if (fields[4])
+            for (char *c = fields[4]; *c; ++c)
+                if (*c == ',') ++n_alt;
 
-        // use saved sample0_gt for i==0 instead of re-scanning lines[0]
-        for (int i = 0; i < n_fns; ++i) {
-            if (i == 0) {
-                fprintf(out, "\t%s", sample0_gt ? sample0_gt : ".");
-                continue;
-            }
-            char *sp = lines[i];
-            int tc = 0;
-            for (char *c = sp; *c; ++c) {
-                if (*c == '\t' && ++tc == 9) {
-                    fprintf(out, "\t%s", c + 1);
-                    break;
-                }
-            }
+        // compute AC / AN / AF across all samples' genotypes
+        int *ac = calloc(n_alt, sizeof(int));
+        int an = 0;
+        for (int i = 0; i < n_fns; ++i)
+            if (sample_gt[i])
+                count_alleles(sample_gt[i], ac, n_alt, &an);
+
+        char ac_str[4096] = {0}, af_str[4096] = {0};
+        int ac_len = 0, af_len = 0;
+        for (int a = 0; a < n_alt; ++a) {
+            double af = an > 0 ? (double)ac[a] / an : 0.0;
+            ac_len += snprintf(ac_str + ac_len, sizeof(ac_str) - ac_len, "%s%d", a ? "," : "", ac[a]);
+            af_len += snprintf(af_str + af_len, sizeof(af_str) - af_len, "%s%.4g", a ? "," : "", af);
         }
+        free(ac);
+
+        // write CHROM..FILTER, INFO (AC, AN, AF, then KPOS if present), FORMAT
+        if (merged_info[0] == '.')
+            fprintf(out, "%s\t%s\t%s\t%s\t%s\t%s\t%s\tAC=%s;AN=%d;AF=%s\t%s",
+                    fields[0], fields[1], fields[2], fields[3],
+                    fields[4], fields[5], fields[6],
+                    ac_str, an, af_str, fields[8]);
+        else
+            fprintf(out, "%s\t%s\t%s\t%s\t%s\t%s\t%s\tAC=%s;AN=%d;AF=%s;KPOS=%s\t%s",
+                    fields[0], fields[1], fields[2], fields[3],
+                    fields[4], fields[5], fields[6],
+                    ac_str, an, af_str, merged_info, fields[8]);
+
+        // sample columns, using saved GT pointers
+        for (int i = 0; i < n_fns; ++i)
+            fprintf(out, "\t%s", sample_gt[i] ? sample_gt[i] : ".");
         fprintf(out, "\n");
     }
 
+    free(sample_gt);
     for (int i = 0; i < n_fns; ++i) {
         if (fps[i]) fclose(fps[i]);
         free(lines[i]);
