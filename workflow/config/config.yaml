@@ -1,0 +1,5 @@
+kmer_length: 31
+min_kmer_freq: 0.98
+filter_setting: 2
+
+snp_threads: 24
