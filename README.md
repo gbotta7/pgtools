@@ -1,9 +1,10 @@
 ## User's guide
 
 **pgtools** is a fast, multi-threaded C toolkit for pangenome SNP-mer analysis. Given a set of genome assemblies, it identifies *SNP-mers* — k-mers whose central base varies across genomes — and builds a VCF file recording:
-1. The reference and alternate alleles for each SNP.
+1. The reference and alternate alleles for each SNP, along with the SNP-mers it originated from.
 2. Per-genome allele counts for each SNP.
-3. Optionally, all hits of each SNP-mer across all input assemblies (contig|strand|position) in the INFO field.
+3. AC, AN, and AF fields.
+5. Optionally, all hits of each SNP-mer across all input assemblies (contig|strand|position) in the INFO field.
 
 Typical use cases can be:
 - **Pangenome SNP calling** — efficiently identify genome-wide SNPs across large collections of bacterial, fungal, or viral assemblies without whole-genome alignment.
@@ -31,7 +32,7 @@ Each genome is streamed again in chunks, and only its SNP-mers are inserted into
 **Dependencies:** `zlib`, `pthreads`, a C compiler supporting C11 (GCC or Clang).
 
 ```bash
-git clone <repo>
+git clone https://github.com/gbotta7/pgtools.git
 cd pgtools/src
 make
 ```
@@ -52,7 +53,6 @@ pgtools count
 To identify unique SNP-mers across 90% of the genomes in the mtb152 dataset against the mtb reference genome, using 18 threads:
 ```bash
 pgtools count -k21 -m0.9 -t18 \
-        -a mtb152_snpmers.txt \
         -o mtb152_snpmers.vcf \
         -r mtb152_asm/H37Rv.fa.gz \
         mtb152_asm/*.fa
@@ -61,7 +61,6 @@ pgtools count -k21 -m0.9 -t18 \
 To identify unique SNP-mers across 98% of the genomes in the hmn579 dataset against the reference (added to the assemblies), using 12 threads:
 ```bash
 pgtools count -k31 -m0.98 -t12 \
-        -a hmn580_snpmers.txt \
         -o hmn580_snpmers.vcf \
         -r hmn_ref_asm/GRCh38_genomic.fna.gz \
         hmn_ref_asm/GRCh38_genomic.fna.gz hmn579_asm/*.fa
@@ -70,7 +69,6 @@ pgtools count -k31 -m0.98 -t12 \
 To identify unique SNP-mers across 98% of the genomes in the hmn579 dataset against the reference (added to the assemblies) and keep mapping information across the pangenome, using 12 threads:
 ```bash
 pgtools count -k31 -m0.98 -t12 \
-        -a hmn580_snpmers.txt \
         -o hmn580_snpmers.vcf \
         -r hmn_ref_asm/GRCh38_genomic.fna.gz \
         -w \
@@ -88,8 +86,8 @@ pgtools count -k31 -m0.98 -t12 \
 | `-K INT`   | `--chunk-size INT` | `1.9g`  | Input chunk size used for streaming genomes                                            |
 | `-t INT`   | `--threads INT`    | `4`     | Number of worker threads                                                               |
 | `-w`       | `--write_info`     | off     | Write positions of all pangenome hits to the INFO field of the output VCF              |
-| `-r FILE`  | `--ref FILE`       | —       | Reference genome used to define SNP-mers                                               |
-| `-a FILE`  | `--snps FILE`      | —       | Output txt file containing pangenome canonical SNP-mers                                         |
+| `-r FILE`  | `--ref FILE`       | —       | Reference genome used to define
+SNP-mers                                         |
 | `-o FILE`  | `--output FILE`    | —       | Output VCF containing genome-specific SNPs and all their hits in the pangenome (if -w is set)                                            |
 | `-v`       | `--verbose`        | off     | Enable verbose logging                                                                 |
 

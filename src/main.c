@@ -9,7 +9,6 @@
 int main_count(int argc, char *argv[])
 {   
     pg_mht_t *h;
-	char *fn_snps = 0;
 	char *ref_fn = 0;
 	char *fn_out = 0;
 	int c, i;
@@ -26,13 +25,12 @@ int main_count(int argc, char *argv[])
         { "threads", ko_required_argument, 306 },
 		{ "write_info", ko_no_argument, 307 },
 		{ "ref", ko_required_argument, 308 },
-        { "snps", ko_required_argument, 309 },
-		{ "output", ko_required_argument, 310 },
-        { "verbose", ko_no_argument, 311 },
+		{ "output", ko_required_argument, 309 },
+        { "verbose", ko_no_argument, 310 },
         { 0, 0, 0 }
     };
 
-	while ((c = ketopt(&o, argc, argv, 1, "k:m:p:f:K:t:wr:a:o:v", long_opts)) >= 0) {
+	while ((c = ketopt(&o, argc, argv, 1, "k:m:p:f:K:t:wr:o:v", long_opts)) >= 0) {
         if      (c == 'k' || c == 301) opt.k = atoi(o.arg);
         else if (c == 'm' || c == 302) opt.min_freq = atof(o.arg);
         else if (c == 'p' || c == 303) opt.pre = atoi(o.arg);
@@ -41,9 +39,8 @@ int main_count(int argc, char *argv[])
         else if (c == 't' || c == 306) opt.n_threads = atoi(o.arg);
 		else if (c == 'w' || c == 307) opt.write_info = 1;
 		else if (c == 'r' || c == 308) ref_fn = o.arg;
-        else if (c == 'a' || c == 309) fn_snps = o.arg;
-		else if (c == 'o' || c == 310) fn_out = o.arg;
-        else if (c == 'v' || c == 311) opt.verbose = 1;
+		else if (c == 'o' || c == 309) fn_out = o.arg;
+        else if (c == 'v' || c == 310) opt.verbose = 1;
     }
 
 	if (argc - o.ind < 1) {
@@ -60,7 +57,6 @@ int main_count(int argc, char *argv[])
 		fprintf(stderr, "  %-10s writing all hits in the pangenome in the info field\n",          "-K INT");
 		fprintf(stderr, "  %-10s path of the reference genome\n","-r FILE");
 		fprintf(stderr, "  %-10s verbose output\n",             "-v");
-		fprintf(stderr, "  %-10s output pangenome SNP-mers\n",  "-a FILE");
 		fprintf(stderr, "  %-10s output genome-specific SNPs in VCF format\n",
 				"-o FILE");
 		return 1;
@@ -71,7 +67,7 @@ int main_count(int argc, char *argv[])
 	}
 
 	// first step: count k-mers in the input files argv and filter for SNP-mers
-	h = pg_count(argv + o.ind, argc - o.ind, &opt, fn_snps);
+	h = pg_count_k(argv + o.ind, argc - o.ind, &opt);
 
 	pg_mht_tighten(h);
 
@@ -86,7 +82,7 @@ int main_count(int argc, char *argv[])
 	if (opt.chunk_size < 1024*1024) opt.chunk_size = 1024*1024; // minimum 1MB
 
 	if (fn_out == NULL) fn_out = "-"; // redirect output to stdout
-	pg_findsnp(argv + o.ind, argc - o.ind, h->n_ins_tot, &opt, h, ref_fn, fn_out);
+	pg_count_snp(argv + o.ind, argc - o.ind, h->n_ins_tot, &opt, h, ref_fn, fn_out);
 
 	fprintf(stderr, "[M::%s] Analyzed %d files\n", __func__, argc - o.ind);
 	
@@ -96,7 +92,7 @@ int main_count(int argc, char *argv[])
 
 int main(int argc, char *argv[])
 {   
-	int ret;
+	int ret = 1;
     pg_reset_realtime();
     if (strcmp(argv[1], "count") == 0) ret = main_count(argc-1, argv+1);
 

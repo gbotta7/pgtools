@@ -124,13 +124,13 @@ void pg_mht_clear_k(pg_mht_t *h, long i, int f);
 void pg_mht_clear_s(pg_mht_t *h, long i);
 int64_t pg_mht_filter(pg_mht_t *h, int n_proc, int n_tot, double min_freq, int ff);
 void pg_mht_tighten(pg_mht_t *h);
-void pg_dump_snps(const char *fn, pg_mht_t *h);
+// void pg_dump_snps(const char *fn, pg_mht_t *h);
 
 void pg_mht_rearrange(pg_mht_t *h, long i);
 void write_vcf(const char *out_fn, pg_mht_t *h, pg_mht_t *ref_h, char *gnm_fn, int write_info);
 void merge_vcfs(const char *out_fn, const char *tmpdir, int n_fns, int n_snps, int ref_idx);
 
-pg_mht_t *pg_count(const char **fns, const int n_fns, const pg_opt_t *opt, const char *out);
-void pg_findsnp(const char **fns, const int n_fns, int64_t n_snps, const pg_opt_t *opt, pg_mht_t *h, const char *ref_fn, const char *out_fn);
+pg_mht_t *pg_count_k(const char **fns, const int n_fns, const pg_opt_t *opt);
+void pg_count_snp(const char **fns, const int n_fns, int64_t n_snps, const pg_opt_t *opt, pg_mht_t *h, const char *ref_fn, const char *out_fn);
 
 #endif // HTAB_H

@@ -214,7 +214,7 @@ static void *worker_pipeline(void *data, int step, void *in) // callback for kt_
 	return 0;
 }
 
-pg_mht_t *pg_count(const char **fns, const int n_fns, const pg_opt_t *opt, const char *out)
+pg_mht_t *pg_count_k(const char **fns, const int n_fns, const pg_opt_t *opt)
 {	
 	pldat_t pl;
 	pl.h = pg_mht_init(opt->k, opt->pre);
@@ -280,9 +280,9 @@ pg_mht_t *pg_count(const char **fns, const int n_fns, const pg_opt_t *opt, const
 
 	pg_mht_tighten(pl.h);
 
-	if (out) {
-		pg_dump_snps(out, pl.h);
-	}
+	// if (out) {
+	// 	pg_dump_snps(out, pl.h);
+	// }
 
     return pl.h;
 }
@@ -341,7 +341,7 @@ static void *worker_file(void *data)
 }
 
 
-void pg_findsnp(const char **fns, const int n_fns, int64_t n_snps, const pg_opt_t *opt, pg_mht_t *h, const char *ref_fn, const char *out_fn)
+void pg_count_snp(const char **fns, const int n_fns, int64_t n_snps, const pg_opt_t *opt, pg_mht_t *h, const char *ref_fn, const char *out_fn)
 {	
 	// shift bits of the hash table values to count SNPs
 	kt_for(opt->n_threads, rearrange_for, h, 1 << opt->pre);
