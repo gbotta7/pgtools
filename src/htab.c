@@ -128,7 +128,7 @@ int64_t pg_mht_filter(pg_mht_t *h, int n_proc, int n_tot, double min_freq, int f
 	return n_del;
 }
 
-int64_t pg_mht_insert_list(pg_mht_t *h, int n, const k_ch_seq_t *a, int f)
+int64_t pg_mht_insert_list(pg_mht_t *h, int n, const ch_seq_t *a, int f)
 {
 	int j, mask = (1<<h->pre) - 1;
 	int64_t n_ins = 0;
@@ -321,7 +321,7 @@ void pg_mht_rearrange(pg_mht_t *h, long i)
 }
 
 
-void pg_mht_count_list(pg_mht_t *h, int n, const s_ch_seq_t *a)
+void pg_mht_count_list(pg_mht_t *h, int n, const ch_seq_t *a, ch_info_t *b)
 {
 	int j, mask = (1<<h->pre) - 1;
 	pg_ht1_t *g;
@@ -362,65 +362,29 @@ void pg_mht_count_list(pg_mht_t *h, int n, const s_ch_seq_t *a)
 		kh_val(g->h, k) = s_val_pack(cnt2, cnt1, snp2, snp1, cb2, cb1);
 
 		// add info
-		int absent;
-		khint_t i = pg_im_put(m->m, key, &absent);
-		kinfo_t *info = &kh_val(m->m, i);;
-		if (absent) {
-			memset(info, 0, sizeof(kinfo_t));
-			info->n = 1;
-			info->m = 1;
-			MALLOC(info->i, 1);
-			info->i[0].postrand = m_postrand_pack(a[j].pos, a[j].strand);
-			info->i[0].seq_idx = a[j].idx;
-		} else {
-			if (info->n == info->m) {
-				info->m = info->m + (info->m >> 1); // grow by 1.5x
-				REALLOC(info->i, info->m);
+		if (b) {
+			int absent;
+			khint_t i = pg_im_put(m->m, key, &absent);
+			kinfo_t *info = &kh_val(m->m, i);;
+			if (absent) {
+				memset(info, 0, sizeof(kinfo_t));
+				info->n = 1;
+				info->m = 1;
+				MALLOC(info->i, 1);
+				info->i[0].postrand = m_postrand_pack(b[j].pos, b[j].strand);
+				info->i[0].seq_idx = b[j].idx;
+			} else {
+				if (info->n == info->m) {
+					info->m = info->m + (info->m >> 1); // grow by 1.5x
+					REALLOC(info->i, info->m);
+				}
+				int n = info->n++;
+				info->i[n].postrand = m_postrand_pack(b[j].pos, b[j].strand);
+				info->i[n].seq_idx = b[j].idx;
 			}
-			int n = info->n++;
-			info->i[n].postrand = m_postrand_pack(a[j].pos, a[j].strand);
-			info->i[n].seq_idx = a[j].idx;
 		}
-
 	}
 }
-
-// void pg_dump_snps(const char *fn, pg_mht_t *h) {
-// 	FILE *fp;
-//     if ((fp = strcmp(fn, "-") ? fopen(fn, "w") : stdout) == 0)
-//         return;
-
-// 	uint64_t hash_mask = (1ULL << ((h->k - 1) * 2)) - 1;
-//     uint64_t flanks;
-// 	uint32_t v, cb1, cb2;
-// 	char seq[h->k + 1];
-// 	int mid = h->k >> 1;
-	
-// 	for (int i = 0; i < 1<<h->pre; ++i) {
-//         pg_ht1_t *g = &h->h[i];
-//         for (khint_t k = 0; k < kh_end(g->h); ++k) {
-//             if (!kh_exist(g->h, k)) continue;
-//             flanks = pg_hash64_inv(((uint64_t)kh_key(g->h, k) << h->pre) | (uint64_t)i, hash_mask);
-// 			v = kh_val(g->h, k);
-// 			cb1 = k_val_cb1(v);
-// 			cb2 = k_val_cb2(v);
-
-// 			for (int j = 0; j < mid; ++j)
-// 				seq[h->k - 1 - j] = nt4_seq_table[(flanks >> (j * 2)) & 3];
-// 			for (int j = 0; j < mid; ++j)
-// 				seq[mid - 1 - j] = nt4_seq_table[(flanks >> ((mid + j) * 2)) & 3];
-// 			seq[h->k] = '\0';
-
-// 			seq[mid] = nt4_seq_table[cb1];
-// 			// fprintf(fp, ">%s\n", seq);
-// 			fprintf(fp, "%s\n", seq);
-
-// 			seq[mid] = nt4_seq_table[cb2];
-// 			// fprintf(fp, ">%s\n", seq);
-// 			fprintf(fp, "%s\n", seq);
-// 		}
-// 	}	
-// }
 
 
 // VCF writer

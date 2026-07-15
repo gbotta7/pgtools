@@ -51,17 +51,15 @@
 #define m_postrand_pack(pos, strand) (((pos) << 1) | (strand))
 
 typedef struct {
-	uint64_t h_flanks;
     uint32_t pos;
     uint16_t idx;       // index of the contig
     uint8_t strand;
-	uint8_t cb;         // stores central base of k-mer and SNP information
-} s_ch_seq_t;
+} ch_info_t;
 
 typedef struct __attribute__((packed)) {
 	uint64_t h_flanks;
 	uint8_t cb; // stores central base of k-mer and SNP information
-} k_ch_seq_t;
+} ch_seq_t;
 
 typedef struct { // terminal options
     int64_t chunk_size;
@@ -118,13 +116,12 @@ typedef struct {
 pg_mht_t *pg_mht_init(int k, int pre);
 pg_mht_t *pg_mht_copy(const pg_mht_t *src);
 void pg_mht_destroy(pg_mht_t *h);
-int64_t pg_mht_insert_list(pg_mht_t *h, int n, const k_ch_seq_t *a, int f);
-void pg_mht_count_list(pg_mht_t *h, int n, const s_ch_seq_t *a);
+int64_t pg_mht_insert_list(pg_mht_t *h, int n, const ch_seq_t *a, int f);
+void pg_mht_count_list(pg_mht_t *h, int n, const ch_seq_t *a, ch_info_t *b);
 void pg_mht_clear_k(pg_mht_t *h, long i, int f);
 void pg_mht_clear_s(pg_mht_t *h, long i);
 int64_t pg_mht_filter(pg_mht_t *h, int n_proc, int n_tot, double min_freq, int ff);
 void pg_mht_tighten(pg_mht_t *h);
-// void pg_dump_snps(const char *fn, pg_mht_t *h);
 
 void pg_mht_rearrange(pg_mht_t *h, long i);
 void write_vcf(const char *out_fn, pg_mht_t *h, pg_mht_t *ref_h, char *gnm_fn, int write_info);

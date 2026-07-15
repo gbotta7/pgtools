@@ -16,8 +16,8 @@ KSEQ_INIT(gzFile, gzread)
 
 typedef struct {
     int64_t n_ins;
-    k_ch_seq_t *ak;  // first pass
-    s_ch_seq_t *as;  // snp pass
+    ch_seq_t *a;
+    ch_info_t *i;  // snp pass
     int n, m;
 } ch_buf_t;
 
@@ -42,6 +42,7 @@ typedef struct {
 	int filt;				// whether the intermediate k-mer filtering has been done for the first time
 	int snp;				// whether it is the kmer pass or the snpmer pass
 	int f_threads;
+	int is_ref;
 } pldat_t;
 
 typedef struct { 			// data structure for each step in kt_pipeline()
@@ -73,23 +74,24 @@ static inline void ch_insert_buf(ch_buf_t *buf, pldat_t *p, uint64_t flanks, uin
 	int pre = flanks & ((1<<p->opt->pre) - 1);
 	ch_buf_t *b = &buf[pre];
 
-	if (p->snp) {
+	if (p->snp && (p->opt->write_info || p->is_ref == 1)) {
 		if (b->n == b->m) {
 			b->m = b->m < 8? 8 : b->m + (b->m>>1);
-			REALLOC(b->as, b->m);
+			REALLOC(b->a, b->m);
+			REALLOC(b->i, b->m);
 		}
-		b->as[b->n].h_flanks = flanks;
-		b->as[b->n].cb = center;
-		b->as[b->n].pos = pos;
-		b->as[b->n].strand = strand;
-		b->as[b->n].idx = cname_idx;
+		b->a[b->n].h_flanks = flanks;
+		b->a[b->n].cb = center;
+		b->i[b->n].pos = pos;
+		b->i[b->n].strand = strand;
+		b->i[b->n].idx = cname_idx;
 	} else {
 		if (b->n == b->m) {
 			b->m = b->m < 8? 8 : b->m + (b->m>>1);
-			REALLOC(b->ak, b->m);
+			REALLOC(b->a, b->m);
 		}
-		b->ak[b->n].h_flanks = flanks;
-		b->ak[b->n].cb = center;
+		b->a[b->n].h_flanks = flanks;
+		b->a[b->n].cb = center;
 	}
 	b->n++;
 }
@@ -131,10 +133,12 @@ static void worker_for(void *data, long i, int tid) // callback for kt_for()
 	ch_buf_t *b = &s->buf[i];
 	pg_mht_t *h = s->p->h;
 
-	if (s->p->snp)
-		pg_mht_count_list(h, b->n, b->as);
+	if (s->p->snp && (s->p->opt->write_info || s->p->is_ref == 1)) // if it is the first genome (reference), we need to save the info
+		pg_mht_count_list(h, b->n, b->a, b->i);
+	else if (s->p->snp && !s->p->opt->write_info)
+		pg_mht_count_list(h, b->n, b->a, 0);
 	else
-		b->n_ins += pg_mht_insert_list(h, b->n, b->ak, s->p->filt);
+		b->n_ins += pg_mht_insert_list(h, b->n, b->a, s->p->filt);
 }
 
 static void clear_for(void *data, long i, int tid) // callback for kt_for()
@@ -182,10 +186,12 @@ static void *worker_pipeline(void *data, int step, void *in) // callback for kt_
 		m = p->snp ? (int)(p->h->n_ins_tot * 1.2 / n) + 1 : (int)(s->nk * 1.2 / n) + 1; // pre-allocate much less memory in SNP pass
 		for (i = 0; i < n; ++i) {
 			s->buf[i].m = m;
-			if (p->snp)
-				CALLOC(s->buf[i].as, m);
+			if (p->snp && (p->opt->write_info || p->is_ref == 1)) {
+				CALLOC(s->buf[i].a, m);
+				CALLOC(s->buf[i].i, m);
+			}
 			else
-				CALLOC(s->buf[i].ak, m);
+				CALLOC(s->buf[i].a, m);
 		}
 		for (i = 0; i < s->n; ++i) {
 			count_seq_buf(s->buf, p, s->len[i], s->seq[i],
@@ -202,10 +208,12 @@ static void *worker_pipeline(void *data, int step, void *in) // callback for kt_
 		kt_for(f_threads, worker_for, s, n);
 		for (i = 0; i < n; ++i) {
 			n_ins += s->buf[i].n_ins;
-			if (p->snp)
-				free(s->buf[i].as);
+			if (p->snp && (p->opt->write_info || p->is_ref == 1)) {
+				free(s->buf[i].a);
+				free(s->buf[i].i);
+			}
 			else
-				free(s->buf[i].ak);
+				free(s->buf[i].a);
 		}
 		p->h->n_ins_tot += n_ins;
 
@@ -389,6 +397,7 @@ void pg_count_snp(const char **fns, const int n_fns, int64_t n_snps, const pg_op
 	pl_ref.fn = ref_fn;
 	pl_ref.opt = opt;
 	pl_ref.snp = 1; // snpmer pass
+	pl_ref.is_ref = 1; // reference genome
 	// grab next genome index
 	int i = fd.n_done++;
 	if (pl_ref.opt->verbose) {
@@ -426,6 +435,7 @@ void pg_count_snp(const char **fns, const int n_fns, int64_t n_snps, const pg_op
 		pl[i].h = pg_mht_copy(h);
 		pl[i].opt = opt;
 		pl[i].snp = 1; // snpmer pass
+		pl[i].is_ref = (i == ref_idx) ? 1 : 0;
 		pthread_create(&tid[i], 0, worker_file, &pl[i]);
 	}
 	for (int i = 0; i < n_batch; ++i) {

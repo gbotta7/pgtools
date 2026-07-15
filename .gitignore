@@ -14,8 +14,6 @@ workflow/logs/**
 # Ignore hidden files/directories inside workflow
 workflow/**/.*
 workflow/**/.*/**
-# Ignore files starting with "snakemake_"
-workflow/**/snakemake_*
 
 # Ignore nohup output files
 nohup.out
