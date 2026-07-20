@@ -375,7 +375,7 @@ void pg_mht_count_list(pg_mht_t *h, int n, const ch_seq_t *a, ch_info_t *b)
 				info->i[0].seq_idx = b[j].idx;
 			} else {
 				if (info->n == info->m) {
-					info->m = info->m + (info->m >> 1); // grow by 1.5x
+					info->m = info->m < 2 ? info->m + 1 : info->m + (info->m >> 1); // grow by 1.5x, but always by >=1
 					REALLOC(info->i, info->m);
 				}
 				int n = info->n++;
