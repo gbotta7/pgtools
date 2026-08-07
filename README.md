@@ -80,16 +80,16 @@ pgtools count -k31 -m0.98 -t12 \
 | Short      | Long               | Default | Description                                                                            |
 | ---------- | ------------------ | ------- | -------------------------------------------------------------------------------------- |
 | `-k INT`   | `--kmer INT`       | `31`    | k-mer size (must be odd and ≤ 31)                                                      |
-| `-m FLOAT` | `--min-freq FLOAT` | `0.95`  | Minimum fraction of genomes a k-mer must appear in to be retained                      |
+| `-m FLOAT` | `--min_freq FLOAT` | `0.95`  | Minimum fraction of genomes a k-mer must appear in to be retained                      |
 | `-p INT`   | `--pre INT`        | `10`    | Number of bits used for hash table partitioning (higher values create more partitions) |
-| `-f INT`   | `--filt-type INT`  | `2`     | Filter type for k-mer counting                                                         |
-| `-K INT`   | `--chunk-size INT` | `1.9g`  | Input chunk size used for streaming genomes                                            |
+| `-f INT`   | `--filt_type INT`  | `2`     | Filter type for k-mer counting                                                         |
+| `-K INT`   | `--chunk_size INT` | `1.9g`  | Input chunk size used for streaming genomes                                            |
 | `-t INT`   | `--threads INT`    | `4`     | Number of worker threads                                                               |
 | `-w`       | `--write_info`     | off     | Write positions of all pangenome hits to the INFO field of the output VCF              |
-| `-r FILE`  | `--ref FILE`       | —       | Reference genome used to define
-SNP-mers                                         |
-| `-o FILE`  | `--output FILE`    | —       | Output VCF containing genome-specific SNPs and all their hits in the pangenome (if -w is set)                                            |
-| `-v`       | `--verbose`        | off     | Enable verbose logging                                                                 |
+| `-b FILE`  | `--bed FILE`       | —       | Text file listing the BED files of regions to count — one path per line, one line per input FASTA, in the same order |
+| `-r FILE`  | `--ref FILE`       | —       | Reference genome used to define SNP-mers                                               |
+| `-o FILE`  | `--output FILE`    | —       | Output VCF containing genome-specific SNPs and all their hits in the pangenome (if `-w` is set) |
+| `-v`       | `--verbose`        | off     | Enable verbose logging       
 
 
 #### SNP filtering (`-f`)
@@ -104,6 +104,10 @@ Controls which SNP-mers are retained:
 
 Use `-f 1` or `-f 0` if you want to retain non-unique SNP-mers.
 
+#### Restricting to specific regions (`-b`)
+
+`-b` takes a single text file listing the paths of all the BED files, one per fasta file passed. Therefore, the list must have exactly as many entries as there are input files.
+
 ---
 
 ## File overview
@@ -111,9 +115,10 @@ Use `-f 1` or `-f 0` if you want to retain non-unique SNP-mers.
 | File | Purpose |
 |------|---------|
 | `main.c` | Entry point and CLI parsing |
-| `count.c` | k-mer counting, SNP-mer discovery, and per-genome counting pipelines |
+| `bed.c/h` BED files handling |
+| `count.c` | K-mer counting, SNP-mer discovery, and per-genome counting pipelines |
 | `htab.c/h` | Partitioned hash table: insert, count, filter |
-| `utils.c/h` | k-mer hashing, nucleotide tables, option initialization |
+| `utils.c/h` | K-mer hashing, nucleotide tables, option initialization |
 | `kthread.c/h` | Thread pool primitives (`kt_for`, `kt_pipeline`) |
 | `parser.c/h` | FASTA/FASTQ streaming via kseq |
 | `kseq.h` | Single-header FASTA/FASTQ parser |
