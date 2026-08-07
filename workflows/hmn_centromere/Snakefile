@@ -9,10 +9,44 @@ rule all:
         # os.path.join(WORKDIR, "results/snps/hmn579_unfilt.cleaned.sorted.centromeric.vcf.gz"),
         # os.path.join(WORKDIR, "results/snps/hmn579_unfilt.cleaned.sorted.pericentromeric.vcf.gz"),
         # os.path.join(WORKDIR, "results/snps/hmn579_unfilt.cleaned.sorted.non_centromeric.vcf.gz")
-        os.path.join(WORKDIR, "results/snps/hmn579_unfilt.ropebwt3_hits.bed")
+        os.path.join(WORKDIR, "data/annotations")
 
-# zcat hmn579_unfilt.cleaned.sorted.vcf.gz | sed 's/CHM13#0#//g' | bgzip -c > hmn579_unfilt.cleaned.sorted.renamed.vcf.gz
 
+rule download_bed_as:
+    input:
+        fa_dir = config["fa_folder"]
+    output:
+        bed_dir = directory(os.path.join(WORKDIR, "data/annotations"))
+    params:
+        hprc_url = config["hprc_url"]
+    log:
+        "logs/download/download_as_anno.log"
+    shell:
+        r"""
+        exec > {log} 2>&1
+
+        mkdir -p {output.bed_dir}
+
+        S3="{params.hprc_url}"
+
+        for FA in {input.fa_dir}/*HG*.fa.gz {input.fa_dir}/*NA*.fa.gz; do
+            BASE=$(basename "$FA" .fa.gz)
+            IFS='_' read -r F1 F2 _ <<< "$BASE"
+            IFS='.' read -r S1 S2 _ <<< "$F2"
+            SAMPLE="$S1"
+            SAMPLE_HAP="${{S1}}_${{S2}}"
+            SAMPLE_FULL="${{F1}}_${{S1}}.${{S2}}"
+
+            [ "$SAMPLE" = "HG002" ] && continue
+
+            PFX="submissions/DC27718F-5F38-43B0-9A78-270F395F13E8--INT_ASM_PRODUCTION/${{SAMPLE}}/assemblies/freeze_2/annotation/censat/"
+            KEY=$(curl -fsS "$S3/?list-type=2&prefix=$PFX" \
+                | grep -o '<Key>[^<]*</Key>' | sed 's|</*Key>||g' \
+                | grep "/${{SAMPLE_HAP}}_.*\.as_hor_sf\.bed$" | head -1)
+
+            curl -fsSL -o {output.bed_dir}/"${{SAMPLE_FULL}}".as_hor_sf.bed "$S3/$KEY"
+        done
+        """
 
 # rule call_SNPs:
 #     input:
@@ -35,9 +69,8 @@ rule all:
 #             -m {params.m} \
 #             -t {threads} \
 #             -f {params.f} \
-#             -r {input.fa_folder}/100000_CHM13.pri.fa.gz \
 #             -o {params.vcf} \
-#             {input.fa_folder}/*.fa.gz 2> {log};
+#             {input.fa_folder}/*HG* *NA*.fa.gz 2> {log};
 #         bgzip {params.vcf} 2>> {log}
 #         """
 

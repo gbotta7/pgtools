@@ -6,6 +6,7 @@
 #include <pthread.h>
 #include <unistd.h>
 
+#include "bed.h"
 #include "kseq.h"
 #include "kthread.h"
 #include "htab.h"
@@ -24,7 +25,8 @@ typedef struct {
 typedef struct {
 	pthread_mutex_t mutex;
 	const char *tmpdir;
-	const char **fns;
+	const char **fa_fns;
+	const char **bed_fns;
 	const char *ref;
 	pg_mht_t *ref_h;		// master hash table for reference data
 	int n_done;				// processed genomes
@@ -37,7 +39,9 @@ typedef struct {
 	filedat_t *f;
     const pg_opt_t *opt;
     kseq_t *ks; 			// file-specific sequence reader
-	const char *fn;
+	bedmap1_t *b;
+	const char *fa_fn;
+	const char *bed_fn;
     pg_mht_t *h;
 	int filt;				// whether the intermediate k-mer filtering has been done for the first time
 	int snp;				// whether it is the kmer pass or the snpmer pass
@@ -152,28 +156,53 @@ static void clear_for(void *data, long i, int tid) // callback for kt_for()
 
 static void *worker_pipeline(void *data, int step, void *in) // callback for kt_pipeline()
 {
-	pldat_t *p = (pldat_t*)data;
+	pldat_t *p = (pldat_t*)data;	
+
 	if (step == 0) { // step 1: read a block of sequences
 		int ret;
 		stepdat_t *s;
 		CALLOC(s, 1);
 		s->p = p;
 		while ((ret = kseq_read(p->ks)) >= 0) {
-			int l = p->ks->seq.l;
+			int32_t l = p->ks->seq.l;
+			const bed_ctg_t *c = 0;
+			int64_t nk_ctg, len_ctg;
 			if (l < p->opt->k) continue;
+			
+			// load bed file if passed
+			if (p->b) {
+				c = bed_get(p->b, p->ks->name.s);	// get contig bed entries
+				if (c == 0) {
+					// if (v) fprintf(stderr, "[E::%s] contig %s not found in BED file %s\n", __func__, p->ks->name.s, p->bed_fn);
+					continue;
+				};
+				nk_ctg = bed_nk(c, l, p->opt->k); // compute number of possible k-mers
+				// len_ctg = bed_covered_len(c, l);   // compute length of the bed entries
+				if (nk_ctg == 0) {
+					// if (v) fprintf(stderr, "[E::%s] contig %s has no regions longer than %d bases in the BED file %s\n", __func__, p->ks->name.s, p->opt->k, p->bed_fn);
+					continue;
+				};
+			} else {
+				nk_ctg  = l - p->opt->k + 1;
+				// len_ctg = l;
+			}
+
 			if (s->n == s->m) {
 				s->m = s->m < 16? 16 : s->m + (s->n>>1);
 				REALLOC(s->len, s->m);
 				REALLOC(s->seq, s->m);
 				REALLOC(s->name_idx, s->m);
-				// REALLOC(s->name, s->m);
 			}
 			MALLOC(s->seq[s->n], l);
 			memcpy(s->seq[s->n], p->ks->seq.s, l);
+
+			// mask the sequence outside the BED entries if a BED file is provided
+			if (c) mask_fa(s->seq[s->n], l, c);
+
 			s->name_idx[s->n] = p->snp ? ch_get_name_idx(&p->h->cnames, p->ks->name.s) : -1;
 			s->len[s->n++] = l;
 			s->sum_len += l;
-			s->nk += l - p->opt->k + 1;
+			s->nk += nk_ctg;
 			if (s->sum_len >= p->opt->chunk_size)
 				break;
 		}
@@ -183,7 +212,7 @@ static void *worker_pipeline(void *data, int step, void *in) // callback for kt_
 		stepdat_t *s = (stepdat_t*)in;
 		int i, n = 1<<p->opt->pre, m;
 		CALLOC(s->buf, n);
-		m = p->snp ? (int)(p->h->n_ins_tot * 1.2 / n) + 1 : (int)(s->nk * 1.2 / n) + 1; // pre-allocate much less memory in SNP pass
+		m = (int)(s->nk * 1.2 / n) + 1;
 		for (i = 0; i < n; ++i) {
 			s->buf[i].m = m;
 			if (p->snp && (p->opt->write_info || p->is_ref == 1)) {
@@ -222,7 +251,7 @@ static void *worker_pipeline(void *data, int step, void *in) // callback for kt_
 	return 0;
 }
 
-pg_mht_t *pg_count_k(const char **fns, const int n_fns, const pg_opt_t *opt)
+pg_mht_t *pg_count_k(const char **fa_fns, const char **bed_fns, const int n_fns, const pg_opt_t *opt)
 {	
 	pldat_t pl;
 	pl.h = pg_mht_init(opt->k, opt->pre);
@@ -230,23 +259,38 @@ pg_mht_t *pg_count_k(const char **fns, const int n_fns, const pg_opt_t *opt)
 	pl.filt = 0;
 	pl.snp = 0; // kmer pass
 	pl.h->n_del_tot = 0;
-	const char *fn;
-
+	const char *fa_fn;
+	const char *bed_fn;
 	for (int i = 0; i < n_fns; ++i) {
-		fn = fns[i];
-		if (opt->verbose)
-			fprintf(stderr, "[M::%s] Processing '%s'\n", __func__, fn);
+		fa_fn = fa_fns[i];
+		bed_fn = bed_fns ? bed_fns[i] : 0;
+		if (!bed_fn && opt->verbose)
+			fprintf(stderr, "[M::%s] Processing '%s'\n", __func__, fa_fn);
+		if (bed_fn && opt->verbose)
+			fprintf(stderr, "[M::%s] Processing '%s' in the regions specified by %s\n", __func__, fa_fn, bed_fn);
 
+		// open fasta file
 		gzFile fp;
-		fp = fn == 0 || strcmp(fn, "-") == 0? gzdopen(0, "r") : gzopen(fn, "r");
+		fp = fa_fn == 0 || strcmp(fa_fn, "-") == 0? gzdopen(0, "r") : gzopen(fa_fn, "r");
 		if (fp == 0) return 0;
 		pl.ks = kseq_init(fp);
-		pl.fn = fn;
+		pl.fa_fn = fa_fn;
+
+		// open bed file if passed
+		pl.bed_fn = bed_fn;
+		pl.b = 0;
+		if (pl.bed_fn) {
+			pl.b = bed_read(pl.bed_fn);
+		}
 
 		kt_pipeline(3, worker_pipeline, &pl, 3);
 
 		kseq_destroy(pl.ks);
 		gzclose(fp);
+
+		if (pl.b) {
+			bed_destroy(pl.b); pl.b = 0;
+		}
 
 		// reset counters for the next round of counting (if any)
 		kt_for(pl.opt->n_threads, clear_for, &pl, 1 << pl.opt->pre);
@@ -315,7 +359,7 @@ static void *worker_file(void *data)
 			pthread_mutex_unlock(&fd->mutex);
 			break;
 		}
-		if (strcmp(fd->fns[i], fd->ref) == 0) {
+		if (strcmp(fd->fa_fns[i], fd->ref) == 0) {
 			pthread_mutex_unlock(&fd->mutex);
 			continue;
 		}
@@ -324,23 +368,37 @@ static void *worker_file(void *data)
 			fprintf(stderr, "[M::%s] Counting SNPs in genome number %d\n", __func__, fd->n_done);
 		}
         pthread_mutex_unlock(&fd->mutex);
-
-        pl->fn = fd->fns[i];
-        gzFile fp = gzopen(pl->fn, "r");
+		
+		// open fasta file
+        pl->fa_fn = fd->fa_fns[i];
+        gzFile fp = gzopen(pl->fa_fn, "r");
         if (fp == 0) {
-            fprintf(stderr, "[E::%s] failed to open '%s'\n", __func__, pl->fn);
+            fprintf(stderr, "[E::%s] failed to open '%s'\n", __func__, pl->fa_fn);
             continue;
         }
         pl->ks = kseq_init(fp);
+
+		// open bed file if passed
+		pl->bed_fn = fd->bed_fns[i];
+		pl->b = 0;
+		if (pl->bed_fn) {
+			pl->b = bed_read(pl->bed_fn);
+		}
+
         kt_pipeline(3, worker_pipeline, pl, 3);
         kseq_destroy(pl->ks);
         gzclose(fp);
+
+		if (pl->b) {
+			bed_destroy(pl->b);
+			pl->b = 0;
+		}
 
 		// store this genome's counts to its own file (no mutex: own file)
 		char gnm_path[4096];
 		snprintf(gnm_path, sizeof gnm_path, "%s/gnm.%d.vcf", fd->tmpdir, i);
 
-		write_vcf(gnm_path, pl->h, fd->ref_h, pl->fn, pl->opt->write_info);
+		write_vcf(gnm_path, pl->h, fd->ref_h, pl->fa_fn, pl->opt->write_info);
 
 		kt_for(pl->f_threads, clear_for, pl, 1 << pl->opt->pre); // clear mht in this thread
     }
@@ -349,13 +407,14 @@ static void *worker_file(void *data)
 }
 
 
-void pg_count_snp(const char **fns, const int n_fns, int64_t n_snps, const pg_opt_t *opt, pg_mht_t *h, const char *ref_fn, const char *out_fn)
+void pg_count_snp(const char **fa_fns, const char **bed_fns, const int n_fns, int64_t n_snps, const pg_opt_t *opt, pg_mht_t *h, const char *ref_fn, const char *out_fn)
 {	
 	// shift bits of the hash table values to count SNPs
 	kt_for(opt->n_threads, rearrange_for, h, 1 << opt->pre);
 
 	filedat_t fd;
-	fd.fns = fns;
+	fd.fa_fns = fa_fns;
+	fd.bed_fns = bed_fns;
 	fd.ref = ref_fn;
 	fd.n_snps = n_snps;
 	fd.n_fns = n_fns;
@@ -373,28 +432,25 @@ void pg_count_snp(const char **fns, const int n_fns, int64_t n_snps, const pg_op
 	fd.tmpdir = tmpdir;
 
 	// find the reference file
-	int ref_idx = -1;
+	int ref_idx;
 	if (fd.ref == NULL) {
 		ref_idx = 0; // use the first input file as a reference
-		fd.ref = fns[0];
+		fd.ref = fa_fns[0];
 	} else {
 		for (int i = 0; i < fd.n_fns; ++i) {
-			if (strcmp(fd.fns[i], fd.ref) == 0) {
+			if (strcmp(fd.fa_fns[i], fd.ref) == 0) {
 				ref_idx = i;
 				break;
 			}
 		}
 	}
-    if (ref_idx < 0) {
-        fprintf(stderr, "[M::%s] Reference file %s not found in the list of filenames\n", __func__, fd.ref);
-    }
 
 	// count SNPmers in the reference first
 	pldat_t pl_ref;
 	pl_ref.f = &fd;
 	pl_ref.f_threads = opt->n_threads;
 	pl_ref.h = pg_mht_copy(h);
-	pl_ref.fn = ref_fn;
+	pl_ref.fa_fn = ref_fn;
 	pl_ref.opt = opt;
 	pl_ref.snp = 1; // snpmer pass
 	pl_ref.is_ref = 1; // reference genome
@@ -404,15 +460,29 @@ void pg_count_snp(const char **fns, const int n_fns, int64_t n_snps, const pg_op
 		fprintf(stderr, "[M::%s] Counting SNPs in genome number %d\n", __func__, fd.n_done);
 	}
 
+	// open reference fasta file
 	gzFile fp = gzopen(ref_fn, "r");
 	if (fp == 0) {
 		fprintf(stderr, "[E::%s] failed to open '%s'\n", __func__, ref_fn);
 		return;
 	}
 	pl_ref.ks = kseq_init(fp);
+
+	// open bed file if passed
+	pl_ref.bed_fn = bed_fns[ref_idx];
+	pl_ref.b = 0;
+	if (pl_ref.bed_fn) {
+		pl_ref.b = bed_read(pl_ref.bed_fn);
+	}
+
 	kt_pipeline(3, worker_pipeline, &pl_ref, 3);
 	kseq_destroy(pl_ref.ks);
 	gzclose(fp);
+
+	if (pl_ref.b) {
+		bed_destroy(pl_ref.b);
+		pl_ref.b = 0;
+	} 
 
 	// point fd to the reference mht
 	fd.ref_h = pl_ref.h;
@@ -420,7 +490,7 @@ void pg_count_snp(const char **fns, const int n_fns, int64_t n_snps, const pg_op
 	// store this genome's counts to its own file (no mutex: own file)
 	char gnm_path[4096];
 	snprintf(gnm_path, sizeof gnm_path, "%s/gnm.%d.vcf", fd.tmpdir, ref_idx);
-	write_vcf(gnm_path, pl_ref.h, fd.ref_h, pl_ref.fn, pl_ref.opt->write_info);
+	write_vcf(gnm_path, pl_ref.h, fd.ref_h, pl_ref.fa_fn, pl_ref.opt->write_info);
 	
 
 	// count SNPmers in each genome in parallel
@@ -435,7 +505,7 @@ void pg_count_snp(const char **fns, const int n_fns, int64_t n_snps, const pg_op
 		pl[i].h = pg_mht_copy(h);
 		pl[i].opt = opt;
 		pl[i].snp = 1; // snpmer pass
-		pl[i].is_ref = (i == ref_idx) ? 1 : 0;
+		pl[i].is_ref = 0;
 		pthread_create(&tid[i], 0, worker_file, &pl[i]);
 	}
 	for (int i = 0; i < n_batch; ++i) {

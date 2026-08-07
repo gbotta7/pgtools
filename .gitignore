@@ -1,8 +1,3 @@
-# Ignore data, results, logs and test directories
-data/
-results/
-logs/
-
 # Build artifacts
 src/*.o
 src/pgtools

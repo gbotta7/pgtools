@@ -5,8 +5,8 @@ pgtools_threads: 12
 ropebwt3_threads: 24
 kmer_length: 31
 
-centromeres_url: "https://s3-us-west-2.amazonaws.com/human-pangenomics/T2T/CHM13/assemblies/annotation/chm13v2.0_censat_v2.1.bed"
-
+# centromeres_url: "https://s3-us-west-2.amazonaws.com/human-pangenomics/T2T/CHM13/assemblies/annotation/chm13v2.0_censat_v2.1.bed"
+hprc_url: "https://human-pangenomics.s3.amazonaws.com"
 fa_folder: "/hlilab/21data/human-asm/indices/asm"
 md_path: "/hlilab/21data/human-asm/indices/human579.meta.tsv"
 
