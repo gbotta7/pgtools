@@ -115,7 +115,7 @@ Use `-f 1` or `-f 0` if you want to retain non-unique SNP-mers.
 | File | Purpose |
 |------|---------|
 | `main.c` | Entry point and CLI parsing |
-| `bed.c/h` BED files handling |
+| `bed.c/h` | BED files handling |
 | `count.c` | K-mer counting, SNP-mer discovery, and per-genome counting pipelines |
 | `htab.c/h` | Partitioned hash table: insert, count, filter |
 | `utils.c/h` | K-mer hashing, nucleotide tables, option initialization |
