@@ -1,0 +1,5 @@
+snakemake_min_version: "7.30.1"
+mambaforge_version: "24.7.1-0"
+
+snp_threads: 12
+mtb_agc_url: "https://zenodo.org/records/18946124/files/Marin2026.Mtb.CompleteHybridAsms.Mtb151CI.WiH37Rv.agc?download=1"

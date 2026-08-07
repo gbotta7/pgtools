@@ -431,6 +431,19 @@ void write_vcf(const char *out_fn, pg_mht_t *h, pg_mht_t *ref_h, char *gnm_fn, i
 	char sample_name[256];
 	strncpy(sample_name, bname, sizeof(sample_name) - 1);
 	sample_name[sizeof(sample_name) - 1] = '\0';
+
+	// strip compression suffix first, if present
+	static const char *compress_exts[] = { ".gz", ".bz2", ".xz", ".zst", NULL };
+	for (int i = 0; compress_exts[i]; i++) {
+		size_t len = strlen(sample_name);
+		size_t elen = strlen(compress_exts[i]);
+		if (len > elen && strcmp(sample_name + len - elen, compress_exts[i]) == 0) {
+			sample_name[len - elen] = '\0';
+			break;
+		}
+	}
+
+	// now strip the "real" extension (.fa, .fasta, .fa.gz's .fa, etc.)
 	char *dot = strrchr(sample_name, '.');
 	if (dot) *dot = '\0';
 

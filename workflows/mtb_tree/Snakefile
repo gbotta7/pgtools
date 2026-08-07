@@ -1,0 +1,98 @@
+import os
+from snakemake.utils import min_version
+
+WORKDIR = "/hlilab/gianfranco/pgtools/workflows/mtb_tree"
+configfile: os.path.join(WORKDIR, "config/config.yaml")
+
+rule all:
+    input:
+        os.path.join(WORKDIR, "results/phylogenies/mtb152_filt.fastree.newick"),
+        os.path.join(WORKDIR, "results/phylogenies/mtb152_filt.iq.treefile")
+
+rule download_mtb_pangenome:
+    output:
+        agc_file = os.path.join(WORKDIR, "data/mtb_asm/Marin2026.Mtb.CompleteHybridAsms.Mtb151CI.WiH37Rv.agc"),
+        fa_folder = directory(os.path.join(WORKDIR, "data/mtb_asm/fa_files")),
+    params:
+        mtb_agc_url = config["mtb_agc_url"]
+    log:
+        "logs/download/agc.log"
+    shell:
+        """
+        mkdir -p {output.fa_folder} 2> {log};
+        wget -O {output.agc_file} {params.mtb_agc_url} 2>> {log};
+        agc getcol -o {output.fa_folder} {output.agc_file} 2>> {log};
+        gzip {output.fa_folder}/*.fa 2>> {log}
+        """
+
+rule call_SNPs:
+    input:
+        fa_folder = os.path.join(WORKDIR, "data/mtb_asm/fa_files"),
+    output:
+        vcf = os.path.join(WORKDIR, "results/snps/mtb152_filt.vcf")
+    params:
+        k = 21,
+        m = 0.98,
+        f = 2
+    log:
+        "logs/snps/call_snps_mtb152_filt.log"
+    threads:
+        config["snp_threads"]
+    shell:
+        """
+        set -Eeuo pipefail;
+        pgtools count -v \
+            -k {params.k} \
+            -m {params.m} \
+            -t {threads} \
+            -f {params.f} \
+            -r {input.fa_folder}/H37Rv.fa.gz \
+            -o {output.vcf} \
+            {input.fa_folder}/*.fa.gz 2> {log}
+        """
+
+rule convert_vcf_to_fasta_aln:
+    input:
+        vcf = os.path.join(WORKDIR, "results/snps/mtb152_filt.vcf"),
+    output:
+        fa_aln = os.path.join(WORKDIR, "results/snps/mtb152_filt.min-100.fasta")
+    params:
+        min_supporting = -100
+    shell:
+        """
+        scripts/py/vcf2phylip.py -i {input.vcf} -f -m {params.min_supporting}
+        """
+
+rule build_fasttree:
+    input:
+        fa_aln = os.path.join(WORKDIR, "results/snps/mtb152_filt.min-100.fasta")
+    output:
+        fasttree = os.path.join(WORKDIR, "results/phylogenies/mtb152_filt.fastree.newick")
+    log:
+        "logs/phylogenies/mtb152_filt.fastree.log"
+    conda:
+        "envs/standalone/fasttree.yaml"
+    shell:
+        """
+        FastTree -nt -gtr {input.fa_aln} > {output.fasttree} 2> {log}
+        """
+
+
+rule build_iqtree:
+    input:
+        fa_aln = os.path.join(WORKDIR, "results/snps/mtb152_filt.min-100.fasta"),
+    output:
+        fa_aln_snp_sites = os.path.join(WORKDIR, "results/snps/mtb152_filt.min-100.varsites.fasta"),
+        iqtree = os.path.join(WORKDIR, "results/phylogenies/mtb152_filt.iq.treefile")
+    params:
+        iqtree_outprefix = os.path.join(WORKDIR, "results/phylogenies/mtb152_filt.iq"),
+        bb = 10000
+    log:
+        "logs/phylogenies/mtb152_filt.iqtree.log"
+    conda:
+        "envs/standalone/iqtree.yaml"
+    shell:
+        """
+        snp-sites {input.fa_aln} > {output.fa_aln_snp_sites};
+        iqtree -m GTR+ASC -nt 1 -bb {params.bb} -s {output.fa_aln_snp_sites} -pre {params.iqtree_outprefix} -redo 2> {log}
+        """

@@ -1,0 +1,14 @@
+snakemake_min_version: "7.30.1"
+mambaforge_version: "24.7.1-0"
+
+pgtools_threads: 12
+ropebwt3_threads: 24
+kmer_length: 31
+
+centromeres_url: "https://s3-us-west-2.amazonaws.com/human-pangenomics/T2T/CHM13/assemblies/annotation/chm13v2.0_censat_v2.1.bed"
+
+fa_folder: "/hlilab/21data/human-asm/indices/asm"
+md_path: "/hlilab/21data/human-asm/indices/human579.meta.tsv"
+
+chroms: ['chr6', 'chr10', 'chr11', 'chr12']
+metrics: ['manhattan', 'euclidean']

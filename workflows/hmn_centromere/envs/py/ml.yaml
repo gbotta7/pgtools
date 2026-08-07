@@ -1,0 +1,11 @@
+name: ml
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python=3.12
+  - matplotlib
+  - numpy
+  - scikit-learn
+  - pandas
+  - umap-learn

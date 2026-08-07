@@ -7,13 +7,17 @@ logs/
 src/*.o
 src/pgtools
 
-# Ignore workflow logs
-workflow/logs/
-workflow/logs/**
+# Ignore workflow logs, data, and results
+workflows/**/logs/
+workflows/**/logs/**
+workflows/**/data/
+workflows/**/data/**
+workflows/**/results/
+workflows/**/results/**
 
 # Ignore hidden files/directories inside workflow
-workflow/**/.*
-workflow/**/.*/**
+workflows/**/.*
+workflows/**/.**/
 
 # Ignore nohup output files
 nohup.out

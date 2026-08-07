@@ -1,0 +1,6 @@
+name: ropebwt3
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - ropebwt3=3.10
