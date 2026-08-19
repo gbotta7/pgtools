@@ -331,11 +331,7 @@ pg_mht_t *pg_count_k(const char **fa_fns, const char **bed_fns, const int n_fns,
 	}
 
 	pg_mht_tighten(pl.h);
-
-	// if (out) {
-	// 	pg_dump_snps(out, pl.h);
-	// }
-
+	
     return pl.h;
 }
 
@@ -379,7 +375,7 @@ static void *worker_file(void *data)
         pl->ks = kseq_init(fp);
 
 		// open bed file if passed
-		pl->bed_fn = fd->bed_fns[i];
+		pl->bed_fn = fd->bed_fns ? fd->bed_fns[i] : 0;
 		pl->b = 0;
 		if (pl->bed_fn) {
 			pl->b = bed_read(pl->bed_fn);
@@ -469,7 +465,7 @@ void pg_count_snp(const char **fa_fns, const char **bed_fns, const int n_fns, in
 	pl_ref.ks = kseq_init(fp);
 
 	// open bed file if passed
-	pl_ref.bed_fn = bed_fns[ref_idx];
+	pl_ref.bed_fn = bed_fns ? bed_fns[ref_idx] : 0;
 	pl_ref.b = 0;
 	if (pl_ref.bed_fn) {
 		pl_ref.b = bed_read(pl_ref.bed_fn);
