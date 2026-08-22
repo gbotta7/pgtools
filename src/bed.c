@@ -13,18 +13,6 @@ const bed_ctg_t *bed_get(const bedmap1_t *b, const char *name)
 	return k == kh_end(b->h) ? 0 : &kh_val(b->h, k);
 }
 
-// int64_t bed_covered_len(const bed_ctg_t *c, int32_t l)
-// {
-// 	int64_t cov = 0; int32_t i;
-// 	for (i = 0; i < c->n; ++i) {
-// 		int32_t st = c->e[i].start, en = c->e[i].end;
-// 		if (st < 0) st = 0;
-// 		if (en > l) en = l; // BED may overrun the FASTA
-// 		if (en > st) cov += en - st;
-// 	}
-// 	return cov;
-// }
-
 int64_t bed_nk(const bed_ctg_t *c, int32_t l, int32_t k)
 {
 	int64_t nk = 0; int32_t i;

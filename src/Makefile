@@ -37,4 +37,4 @@ htab.o:    htab.c    htab.h utils.h khashl.h parser.h kseq.h
 kthread.o: kthread.c kthread.h
 parser.o:  parser.c  parser.h kseq.h utils.h
 sys.o:     sys.c     sys.h
-utils.o:   utils.c   utils.h
+utils.o:   utils.c   htab.h utils.h

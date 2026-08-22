@@ -7,13 +7,12 @@
 #include "sys.h"
 #include "utils.h"
 
-int main_count(int argc, char *argv[])
-{   
-    pg_mht_t *h;
-	char *ref_fn = 0;
+int main_detect(int argc, char *argv[])
+{
+	pg_mht_t *h;
 	char *fn_out = 0;
-	const char *bed_list_fn = 0;
-	const char **bed_fns = 0;
+	char *bed_list_fn = 0;
+	char **bed_fns = 0;
 	int n_bed = 0;
 	int n_fa; 
 	int c;
@@ -22,65 +21,69 @@ int main_count(int argc, char *argv[])
 	pg_opt_init(&opt);
 
 	static ko_longopt_t long_opts[] = {
-        { "kmer", ko_required_argument, 301 },
-        { "min_freq", ko_required_argument, 302 },
-        { "pre", ko_required_argument, 303 },
-        { "filt_type", ko_required_argument, 304 },
-        { "chunk_size", ko_required_argument, 305 },
-        { "threads", ko_required_argument, 306 },
-		{ "write_info", ko_no_argument, 307 },
-		{ "ref", ko_required_argument, 308 },
-		{ "output", ko_required_argument, 309 },
-        { "verbose", ko_no_argument, 310 },
-		{ "bed", ko_required_argument, 311 },
+        { "k_length", ko_required_argument, 301 },
+        { "msf", ko_required_argument, 302 },
+		{ "maf", ko_required_argument, 303 },
+		{ "snp", ko_no_argument, 304 },
+		{ "mko", ko_required_argument, 305 },
+        { "pre", ko_required_argument, 306 },
+        { "filt_type", ko_required_argument, 307 },
+        { "chunk_size", ko_required_argument, 308 },
+        { "threads", ko_required_argument, 309 },
+		{ "output", ko_required_argument, 310 },
+        { "verbose", ko_no_argument, 311 },
+		{ "bed", ko_required_argument, 312 },
         { 0, 0, 0 }
     };
 
-	while ((c = ketopt(&o, argc, argv, 1, "k:m:p:f:K:t:wr:o:vb:", long_opts)) >= 0) {
+	while ((c = ketopt(&o, argc, argv, 1, "k:p:f:K:t:wo:vb:", long_opts)) >= 0) {
         if      (c == 'k' || c == 301) opt.k = atoi(o.arg);
-        else if (c == 'm' || c == 302) opt.min_freq = atof(o.arg);
-        else if (c == 'p' || c == 303) opt.pre = atoi(o.arg);
-        else if (c == 'f' || c == 304) opt.filt_type = atoi(o.arg);
-        else if (c == 'K' || c == 305) opt.chunk_size = mm_parse_num(o.arg);
-        else if (c == 't' || c == 306) opt.n_threads = atoi(o.arg);
-		else if (c == 'w' || c == 307) opt.write_info = 1;
-		else if (c == 'r' || c == 308) ref_fn = o.arg;
-		else if (c == 'o' || c == 309) fn_out = o.arg;
-        else if (c == 'v' || c == 310) opt.verbose = 1;
-		else if (c == 'b' || c == 311) bed_list_fn = o.arg;
+        else if (c == 302) opt.msf = atof(o.arg);
+		else if (c == 303) opt.maf = atof(o.arg);
+		else if (c == 304) opt.snp = 1;
+		else if (c == 305) opt.mko = atoi(o.arg);
+        else if (c == 'p' || c == 306) opt.pre = atoi(o.arg);
+        else if (c == 'f' || c == 307) opt.filt_type = atoi(o.arg);
+        else if (c == 'K' || c == 308) opt.chunk_size = mm_parse_num(o.arg);
+        else if (c == 't' || c == 309) opt.n_threads = atoi(o.arg);
+		else if (c == 'o' || c == 310) fn_out = o.arg;
+        else if (c == 'v' || c == 311) opt.verbose = 1;
+		else if (c == 'b' || c == 312) bed_list_fn = o.arg;
     }
 
 	if (argc - o.ind < 1) {
-		fprintf(stderr, "Usage: pgtools count [options] <in1.fa> [in2.fa [...]]\n");
+		fprintf(stderr, "Usage: pgtools detect [options] <in1.fa> [in2.fa [...]]\n");
 		fprintf(stderr, "Options:\n");
 		fprintf(stderr, "  %-10s k-mer size [%d]\n",            "-k INT",  opt.k);
-		fprintf(stderr, "  %-10s minimum frequency of k-mers across inputs to be kept [%g]\n",
-				"-m FLOAT", opt.min_freq);
+		fprintf(stderr, "  %-10s minimum sample frequency of k-mers across inputs to be kept [%g]\n",
+				"-t FLOAT", opt.msf);
+		fprintf(stderr, "  %-10s minimum allelic frequency of SNP-mers across input samples [%g]\n",
+				"-t FLOAT", opt.maf);
+		fprintf(stderr, "  %-10s snp mode to count SNP-mers\n",         "--snp");
+		fprintf(stderr, "  %-10s maximum k-mer occurrences [%d]\n",         "--mko INT",  opt.mko);
 		fprintf(stderr, "  %-10s prefix length [%d]\n",         "-p INT",  opt.pre);
 		fprintf(stderr, "  %-10s filter type [%d]\n",           "-f INT",  opt.filt_type);
 		fprintf(stderr, "  %-10s number of worker threads [%d]\n",
 				"-t INT",  opt.n_threads);
 		fprintf(stderr, "  %-10s chunk size [%ld]\n",           "-K INT", (long)opt.chunk_size);
-		fprintf(stderr, "  %-10s write all pangenome hits in the INFO field\n", "-w");
 		fprintf(stderr, "  %-10s text file listing one BED path per line, one line per input FASTA, in the same order\n",
 				"-b FILE");
-		fprintf(stderr, "  %-10s path of the reference genome\n","-r FILE");
 		fprintf(stderr, "  %-10s verbose output\n",             "-v");
-		fprintf(stderr, "  %-10s output genome-specific SNPs in VCF format\n",
+		fprintf(stderr, "  %-10s output k-mers or SNP-mers in a text file\n",
 				"-o FILE");
 
 		free(bed_fns);
 		return 1;
 	}
+
+	// warnings
 	if (opt.k >= 32 || !(opt.k % 2)) {
 		fprintf(stderr, "ERROR: -k must be odd and <=31\n");
 
 		free(bed_fns);
 		return 1;
 	}
-
 	n_fa = argc - o.ind;
-
 	// load bed filenames
 	if (bed_list_fn) {
 		CALLOC(bed_fns, n_fa); // bed files have to be as many as fasta filesd
@@ -98,56 +101,175 @@ int main_count(int argc, char *argv[])
 		}
 		fclose(fp);
 	}
-
 	if (n_bed && n_bed != n_fa) {
 		fprintf(stderr, "[E::%s] %d BED files given for %d FASTA files; -b must be given once per input or not at all\n", __func__, n_bed, n_fa);
 
 		free(bed_fns);
 		return 1;
 	}
-	
-	// check if the passed reference is in the fasta files
-	if (ref_fn) {
-		int na_ref = 1;
-		for (int i = 0; i < n_fa; ++i) {
-			if (strcmp(argv[o.ind + i], ref_fn) == 0) {
-				na_ref = 0;
-				break;
-			}
-		}
-		if (na_ref) {
-			fprintf(stderr, "[E::%s] reference file %s not found in the list of inputs\n", __func__, ref_fn);
+	if (opt.mko < 1) {
+		fprintf(stderr, "[E::%s] mko is %d must be >= 1\n", __func__, opt.mko);
+		return 1;
+	}
+	if (opt.filt_type == 2) {
+		fprintf(stderr, "[W::%s] -f/--filt_type = 2: parameter --mko has no effect in this mode\n", __func__);
+	}
+	if (!opt.snp) {
+		fprintf(stderr, "[W::%s] --snp not activated: parameter --maf has no effect in this mode\n", __func__);
+	}
+
+	// start
+	h = pg_detect(argv + o.ind, n_bed ? bed_fns : 0, n_fa, &opt, fn_out);
+	fprintf(stderr, "[M::%s] Detected required k-mers in %d files\n", __func__, n_fa);
+
+	return 0;
+}
+
+
+int main_count(int argc, char *argv[])
+{   
+    pg_mht_t *h;
+	char *fn_out = 0;
+	char *bed_list_fn = 0;
+	char **bed_fns = 0;
+	char *kmer_file = 0;
+	int n_bed = 0;
+	int n_fa; 
+	int c;
+	pg_opt_t opt;
+	ketopt_t o = KETOPT_INIT;
+	pg_opt_init(&opt);
+
+	static ko_longopt_t long_opts[] = {
+        { "k_length", ko_required_argument, 301 },
+        { "msf", ko_required_argument, 302 },
+		{ "maf", ko_required_argument, 303 },
+		{ "snp", ko_no_argument, 304 },
+		{ "mko", ko_required_argument, 305 },
+        { "pre", ko_required_argument, 306 },
+        { "filt_type", ko_required_argument, 307 },
+        { "chunk_size", ko_required_argument, 308 },
+        { "threads", ko_required_argument, 309 },
+		{ "write_info", ko_no_argument, 310 },
+		{ "write_mko", ko_required_argument, 311 },
+		{ "output", ko_required_argument, 312 },
+        { "verbose", ko_no_argument, 313 },
+		{ "bed", ko_required_argument, 314 },
+		{ "kmers", ko_required_argument, 315 },
+        { 0, 0, 0 }
+    };
+
+	while ((c = ketopt(&o, argc, argv, 1, "k:p:f:K:t:wo:vb:", long_opts)) >= 0) {
+        if      (c == 'k' || c == 301) opt.k = atoi(o.arg);
+        else if (c == 302) opt.msf = atof(o.arg);
+		else if (c == 303) opt.maf = atof(o.arg);
+		else if (c == 304) opt.snp = 1;
+		else if (c == 305) opt.mko = atoi(o.arg);
+        else if (c == 'p' || c == 306) opt.pre = atoi(o.arg);
+        else if (c == 'f' || c == 307) opt.filt_type = atoi(o.arg);
+        else if (c == 'K' || c == 308) opt.chunk_size = mm_parse_num(o.arg);
+        else if (c == 't' || c == 309) opt.n_threads = atoi(o.arg);
+		else if (c == 'w' || c == 310) opt.write_info = 1;
+		else if (c == 311) opt.write_mko = atoi(o.arg);
+		else if (c == 'o' || c == 312) fn_out = o.arg;
+        else if (c == 'v' || c == 313) opt.verbose = 1;
+		else if (c == 'b' || c == 314) bed_list_fn = o.arg;
+		else if (c == 315) kmer_file = o.arg;
+    }
+
+	if (argc - o.ind < 1) {
+		fprintf(stderr, "Usage: pgtools count [options] <in1.fa> [in2.fa [...]]\n");
+		fprintf(stderr, "Options:\n");
+		fprintf(stderr, "  %-10s k-mer size [%d]\n",            "-k INT",  opt.k);
+		fprintf(stderr, "  %-10s minimum sample frequency of k-mers across inputs to be kept [%g]\n",
+				"-t FLOAT", opt.msf);
+		fprintf(stderr, "  %-10s minimum allelic frequency of SNP-mers across input samples [%g]\n",
+				"-t FLOAT", opt.maf);
+		fprintf(stderr, "  %-10s snp mode to count SNP-mers\n",         "--snp");
+		fprintf(stderr, "  %-10s maximum k-mer occurrences [%d]\n",         "--mko INT",  opt.mko);
+		fprintf(stderr, "  %-10s prefix length [%d]\n",         "-p INT",  opt.pre);
+		fprintf(stderr, "  %-10s filter type [%d]\n",           "-f INT",  opt.filt_type);
+		fprintf(stderr, "  %-10s number of worker threads [%d]\n",
+				"-t INT",  opt.n_threads);
+		fprintf(stderr, "  %-10s chunk size [%ld]\n",           "-K INT", (long)opt.chunk_size);
+		fprintf(stderr, "  %-10s write pangenome hits in the info file up to --write_mko occurrences\n", "-w");
+		fprintf(stderr, "  %-10s write up to INT pangenome hits in the info file [%d]\n", "--write_mko INT", opt.write_mko);
+		fprintf(stderr, "  %-10s text file listing one BED path per line, one line per input FASTA, in the same order\n",
+				"-b FILE");
+		fprintf(stderr, "  %-10s verbose output\n",             "-v");
+		fprintf(stderr, "  %-10s output genome-specific k-mers or SNP-mers in TSV format\n",
+				"-o FILE");
+		fprintf(stderr, "  %-10s list of k-mers or SNP-mers as a text file\n",
+				"--kmers FILE");
+
+		free(bed_fns);
+		return 1;
+	}
+
+	// warnings
+	if (opt.k >= 32 || !(opt.k % 2)) {
+		fprintf(stderr, "ERROR: -k must be odd and <=31\n");
+
+		free(bed_fns);
+		return 1;
+	}
+	n_fa = argc - o.ind;
+	// load bed filenames
+	if (bed_list_fn) {
+		CALLOC(bed_fns, n_fa); // bed files have to be as many as fasta filesd
+		char buf[1024];
+		FILE *fp = fopen(bed_list_fn, "r");
+		if (fp == 0) {
+			fprintf(stderr, "[E::%s] failed to open %s\n", __func__, bed_list_fn);
 			free(bed_fns);
 			return 1;
 		}
+		while (n_bed < n_fa && fgets(buf, sizeof(buf), fp)) {
+			buf[strcspn(buf, "\r\n")] = 0; // strip the \n or \r 
+			if (buf[0] == 0) continue;	   // check for empty lines
+			bed_fns[n_bed++] = strdup(buf);
+		}
+		fclose(fp);
+	}
+	if (n_bed && n_bed != n_fa) {
+		fprintf(stderr, "[E::%s] %d BED files given for %d FASTA files; -b must be given once per input or not at all\n", __func__, n_bed, n_fa);
+
+		free(bed_fns);
+		return 1;
+	}
+	if (opt.mko < 1) {
+		fprintf(stderr, "[E::%s] mko is %d must be >= 1\n", __func__, opt.mko);
+	}
+	if (!opt.snp) {
+		fprintf(stderr, "[W::%s] --snp not activated: parameter --maf has no effect in this mode\n", __func__);
 	}
 
-	// first step: count k-mers in the input files argv and filter for SNP-mers
-	// h = pg_count_k(argv + o.ind, argc - o.ind, &opt);
-	h = pg_count_k(argv + o.ind, n_bed ? bed_fns : 0, n_fa, &opt);
-
-	pg_mht_tighten(h);
-
-	// third step: count SNPmers in each file
-	if (ref_fn == NULL) {
-		ref_fn = argv[o.ind];
-		fprintf(stderr, "[M::%s] No reference passed, taking %s as a reference\n", __func__, argv[o.ind]);
+	// start
+	// first step: detect specific k-mers
+	if (kmer_file) {
+		fprintf(stderr, "[W::%s] -s/--kmers given: k-mers are loaded directly from '%s'\n-f/--filt_type, --msf, --maf, and --mko have no effect in this mode (they only apply to pgtools detect)\n", __func__, kmer_file);
+		// repopulate hash table from SNP-mers file
+		fprintf(stderr, "[M::%s] repopulating hash table from file '%s'\n", __func__, kmer_file);
+		h = pg_mht_repopulate(kmer_file, &opt);
+	}
+	else {
+		h = pg_detect(argv + o.ind, n_bed ? bed_fns : 0, n_fa, &opt, 0);
+		fprintf(stderr, "[M::%s] Detected required k-mers in %d files\n", __func__, n_fa);
 	}
 
+	// second step: count k-mers in each file
 	// reduce chunk_size for second pass
 	opt.chunk_size = opt.chunk_size / 10;
 	if (opt.chunk_size < 1024*1024) opt.chunk_size = 1024*1024; // minimum 1MB
 
 	if (fn_out == NULL) fn_out = "-"; // redirect output to stdout
-	// pg_count_snp(argv + o.ind, argc - o.ind, h->n_ins_tot, &opt, h, ref_fn, fn_out);
-	pg_count_snp(argv + o.ind, n_bed ? bed_fns : 0, n_fa, h->n_ins_tot, &opt, h, ref_fn, fn_out);
+	pg_count(argv + o.ind, n_bed ? bed_fns : 0, n_fa, h->n_ins_tot, &opt, h, fn_out);
 
 	free(bed_fns);
-	fprintf(stderr, "[M::%s] Analyzed %d files\n", __func__, n_fa);
+	fprintf(stderr, "[M::%s] Counted required k-mers in %d files\n", __func__, n_fa);
 	
     return 0;
 }
-
 
 int main(int argc, char *argv[])
 {   
@@ -157,11 +279,13 @@ int main(int argc, char *argv[])
 	if (argc < 2) {
 		fprintf(stderr, "Usage: pgtools <command> [options]\n");
 		fprintf(stderr, "Commands:\n");
-		fprintf(stderr, "  count    count k-mers and call genome-specific SNPs\n");
+		fprintf(stderr, "  detect    detect specific k-mers in the passed fasta files\n");
+		fprintf(stderr, "  count    count specific k-mers in the passed fasta files\n");
 		return 1;
 	}
 
-    if (strcmp(argv[1], "count") == 0) ret = main_count(argc-1, argv+1);
+    if (strcmp(argv[1], "detect") == 0) ret = main_detect(argc-1, argv+1);
+	else if (strcmp(argv[1], "count") == 0) ret = main_count(argc-1, argv+1);
 	else {
 		fprintf(stderr, "[E::main] unknown command '%s'\n", argv[1]);
 		return 1;

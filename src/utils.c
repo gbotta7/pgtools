@@ -1,3 +1,4 @@
+#include "htab.h"
 #include "utils.h"
 
 unsigned char seq_nt4_table[256] = { // translate ACGT to 0123
@@ -32,32 +33,17 @@ void pg_opt_init(pg_opt_t *o)
 {
 	memset(o, 0, sizeof(pg_opt_t));
 	o->k = 31;
-	o->min_freq = 0.95;
+	o->msf = 0.95;  // total allelic frequency
+    o->maf = 0;     // minimum allelic frequency
+    o->snp = 0;
+    o->mko = F_COUNTER_MAX;
 	o->pre = 10;
-	o->filt_type = 2;
-	o->n_threads = 4;
+	o->filt_type = 0;
+	o->n_threads = 3;
 	o->chunk_size = mm_parse_num("1.9g");
     o->write_info = 0;
+    o->write_mko = 10;
 	o->verbose = 0;
-}
-
-char *find_cli_tool(const char *tool) {
-    char cmd[256];
-    snprintf(cmd, sizeof(cmd), "bash -l -c 'which %s'", tool);
-
-    FILE *fp = popen(cmd, "r");
-    if (!fp) return NULL;
-
-    char *path = malloc(1024);
-    if (!fgets(path, 1024, fp)) {
-        free(path);
-        pclose(fp);
-        return NULL;
-    }
-    pclose(fp);
-
-    path[strcspn(path, "\n")] = '\0';
-    return path;
 }
 
 int64_t mm_parse_num(const char *str)
