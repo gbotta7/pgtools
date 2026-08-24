@@ -5,7 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "htab.h"
+#include "shtab.h"
 
 #define PG_VERSION "0.1.0" 
 

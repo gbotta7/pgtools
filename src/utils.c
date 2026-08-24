@@ -1,4 +1,4 @@
-#include "htab.h"
+#include "shtab.h"
 #include "utils.h"
 
 unsigned char seq_nt4_table[256] = { // translate ACGT to 0123
@@ -36,7 +36,7 @@ void pg_opt_init(pg_opt_t *o)
 	o->msf = 0.95;  // total allelic frequency
     o->maf = 0;     // minimum allelic frequency
     o->snp = 0;
-    o->mko = F_COUNTER_MAX;
+    o->mko = F_GNM_COUNTER_MAX;
 	o->pre = 10;
 	o->filt_type = 0;
 	o->n_threads = 3;

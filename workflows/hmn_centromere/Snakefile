@@ -3,221 +3,226 @@ from snakemake.utils import min_version
 
 WORKDIR = "/hlilab/gianfranco/pgtools/workflows/hmn_centromere"
 configfile: os.path.join(WORKDIR, "config/config.yaml")
+min_version(config["snakemake_min_version"])
+
+DATADIR = config["fa_folder"]
+sample_list = [l.strip() for l in open(config["sample_list_path"])]
+
+wildcard_constraints:
+    region = "centromeric|pericentromeric",
+    chr = r"chr[0-9XYM]+"
+
+include: "rules/prepare.smk"
+include: "rules/cm.smk"
+include: "rules/pcm.smk"
 
 rule all:
     input:
-        # os.path.join(WORKDIR, "results/snps/hmn579_unfilt.cleaned.sorted.centromeric.vcf.gz"),
-        # os.path.join(WORKDIR, "results/snps/hmn579_unfilt.cleaned.sorted.pericentromeric.vcf.gz"),
-        # os.path.join(WORKDIR, "results/snps/hmn579_unfilt.cleaned.sorted.non_centromeric.vcf.gz")
-        os.path.join(WORKDIR, "data/annotations")
-
-
-rule download_bed_as:
-    input:
-        fa_dir = config["fa_folder"]
-    output:
-        bed_dir = directory(os.path.join(WORKDIR, "data/annotations"))
-    params:
-        hprc_url = config["hprc_url"]
-    log:
-        "logs/download/download_as_anno.log"
-    shell:
-        r"""
-        exec > {log} 2>&1
-
-        mkdir -p {output.bed_dir}
-
-        S3="{params.hprc_url}"
-
-        for FA in {input.fa_dir}/*HG*.fa.gz {input.fa_dir}/*NA*.fa.gz; do
-            BASE=$(basename "$FA" .fa.gz)
-            IFS='_' read -r F1 F2 _ <<< "$BASE"
-            IFS='.' read -r S1 S2 _ <<< "$F2"
-            SAMPLE="$S1"
-            SAMPLE_HAP="${{S1}}_${{S2}}"
-            SAMPLE_FULL="${{F1}}_${{S1}}.${{S2}}"
-
-            [ "$SAMPLE" = "HG002" ] && continue
-
-            PFX="submissions/DC27718F-5F38-43B0-9A78-270F395F13E8--INT_ASM_PRODUCTION/${{SAMPLE}}/assemblies/freeze_2/annotation/censat/"
-            KEY=$(curl -fsS "$S3/?list-type=2&prefix=$PFX" \
-                | grep -o '<Key>[^<]*</Key>' | sed 's|</*Key>||g' \
-                | grep "/${{SAMPLE_HAP}}_.*\.as_hor_sf\.bed$" | head -1)
-
-            curl -fsSL -o {output.bed_dir}/"${{SAMPLE_FULL}}".as_hor_sf.bed "$S3/$KEY"
-        done
-        """
-
-# rule call_SNPs:
-#     input:
-#         fa_folder = config["fa_folder"]
-#     output:
-#         vcf = os.path.join(WORKDIR, "results/snps/hmn579_unfilt.vcf.gz")
-#     params:
-#         k = config["kmer_length"],
-#         m = 0.75,
-#         f = 0,
-#         vcf = os.path.join(WORKDIR, "results/snps/hmn579_unfilt.vcf")
-#     threads:
-#         config["pgtools_threads"]
-#     log:
-#         "logs/snps/call_snps_hmn579_unfilt.log"
-#     shell:
-#         """
-#         pgtools count -v \
-#             -k {params.k} \
-#             -m {params.m} \
-#             -t {threads} \
-#             -f {params.f} \
-#             -o {params.vcf} \
-#             {input.fa_folder}/*HG* *NA*.fa.gz 2> {log};
-#         bgzip {params.vcf} 2>> {log}
-#         """
-
-# rule download_centromere_bed:
-#     output:
-#         bed = os.path.join(WORKDIR, "results/centromeres/chm13v2.0_censat_v2.1.bed")
-#     params:
-#         url = config["centromeres_url"]
-#     log:
-#         "logs/centromeres/download_centromere_bed.log"
-#     shell:
-#         """
-#         wget -O {output.bed} {params.url} 2> {log}
-#         """
-
-# rule process_centromere_bed:
-#     input:
-#         bed = os.path.join(WORKDIR, "results/centromeres/chm13v2.0_censat_v2.1.bed")
-#     output:
-#         no_xy_bed = os.path.join(WORKDIR, "results/centromeres/chm13v2.0_censat_v2.1.no_xy.bed"),
-#         no_xy_cm_bed = os.path.join(WORKDIR, "results/centromeres/chm13v2.0_censat_v2.1.no_xy.centromeric.bed"),
-#         no_xy_pcm_bed = os.path.join(WORKDIR, "results/centromeres/chm13v2.0_censat_v2.1.no_xy.pericentromeric.bed")
-#     params:
-#         url = config["centromeres_url"]
-#     log:
-#         "logs/centromeres/process_centromere_bed.log"
-#     shell:
-#         """
-#         grep -v 'chrX\|chrY' {input.bed} > {output.no_xy_bed} 2> {log};
-#         awk -F'\\t' '$4 ~ /^hor_|^dhor_/' {output.no_xy_bed} > {output.no_xy_cm_bed} 2>> {log}
-#         awk -F'\\t' '$4 ~ /^hsat1A_|^hsat1B_|^hsat2_|^hsat3_|^bsat_|^gsat_|^mon_|^ct_|^censat_|^rDNA_/' {output.no_xy_bed} > {output.no_xy_pcm_bed} 2>> {log}
-#         """
-
-rule extract_snpmers:
-    input:
-        vcf = os.path.join(WORKDIR, "results/snps/hmn579_unfilt.vcf.gz")
-    output:
-        snpmers = os.path.join(WORKDIR, "results/snps/hmn579_unfilt.snpmers.tsv")
-    log:
-        "logs/snps/extract_snpmers_hmn579_unfilt.log"
-    shell:
-        r"""
-        zcat {input.vcf} | awk -F'\t' -v OFS='\t' '!/^#/ {{
-            n = split($8, a, ";")
-            for (i = 1; i <= n; i++)
-                if (a[i] ~ /^SNPMER=/) {{
-                    sub(/^SNPMER=/, "", a[i])
-                    print a[i], $4, $5
-                }}
-        }}' > {output.snpmers} 2> {log}
-        """
-
-rule format_snpmers:
-    input:
-        snpmers = os.path.join(WORKDIR, "results/snps/hmn579_unfilt.snpmers.tsv")
-    output:
-        snpmers = os.path.join(WORKDIR, "results/snps/hmn579_unfilt.snpmers.fa")
-    log:
-        "logs/snps/format_snpmers_hmn579_unfilt.log"
-    script:
-        "scripts/py/format_snpmers.py"
+        expand(
+            os.path.join(WORKDIR, "results/snps/centromeres/{chr}/hmn462_unfilt.centromeric.snpmers.tsv"),
+            chr=config["chroms"]
+        ),
+        expand(
+            os.path.join(WORKDIR, "results/snps/centromeres/{chr}/hmn462_unfilt.centromeric.rare_kmers.tsv"),
+            chr=config["chroms"]
+        )
+        # expand(
+        #     os.path.join(WORKDIR, "results/snps/centromeres/{chr}/hmn462_unfilt.pericentromeric.{span}.vcf"),
+        #     chr=config["chroms"],
+        #     span=config["ranges"].keys()
+        # )
         
 
-rule compute_ropebwt3_hits:
-    input:
-        fmd_idx = os.path.join(WORKDIR, "data/ropebwt3_idx/human579.fmd"),
-        snpmers = os.path.join(WORKDIR, "results/snps/hmn579_unfilt.snpmers.fa")
-    output:
-        hits = os.path.join(WORKDIR, "results/snps/hmn579_unfilt.ropebwt3_hits.bed.gz")
-    params:
-        k = config["kmer_length"],
-        max_hits = 50
-    threads: 
-        config["ropebwt3_threads"]
-    log:
-        "logs/snps/compute_ropebwt3_hits_hmn579_unfilt.log"
-    conda:
-        "envs/standalone/ropebwt3.yaml"
-    shell:
-        """
-        ropebwt3 mem -t{threads} -l{params.k} -p{params.max_hits} {input.fmd_idx} {input.snpmers} 2> {log} | gzip > {output.hits}
-        """
+# rule plot_umap:
+#     input:
+#         vcf = os.path.join(WORKDIR, "results/snps/centromeres/a_satellites/{chr}/hmn462_unfilt.vcf.gz"),
+#         md_path = config["md_path"]
+#     output:
+#         plotdir = directory(os.path.join(WORKDIR, "plots/snps/centromeres/a_satellites/umap/{chr}"))
+#     log:
+#         "logs/snps/centromeres/a_satellites/{chr}/plot_umap_hmn462_unfilt.log"
+#     conda:
+#         "envs/py/ml.yaml"
+#     script:
+#         "scripts/py/plot_umap.py"
+
+# rule plot_snps_density:
+#     input:
+#         vcf = lambda wildcards: expand(
+#             os.path.join(WORKDIR, "results/snps/centromeres/a_satellites/{chr}/hmn462_unfilt.vcf.gz"),
+#             chr=discovered_chroms(wildcards)
+#         ),
+#         bed_dir = lambda wildcards: expand(
+#             os.path.join(WORKDIR, "results/annotations/centromeres/a_satellites/add_sf/{chr}"),
+#             chr=discovered_chroms(wildcards)
+#         )
+#     output:
+#         plot = os.path.join(WORKDIR, "plots/snps/centromeres/a_satellites/stats/snp_density.png")
+#     log:
+#         "logs/snps/centromeres/a_satellites/plot_snps_density_hmn462_unfilt.log"
+#     conda:
+#         "envs/py/ml.yaml"
+#     script:
+#         "scripts/py/plot_stats.py"
+
+# rule subset_genomes:
+#     input:
+#         fa_folder = config["fa_folder"],
+#         bed_dir = os.path.join(WORKDIR, "data/annotations/centromeres/a_satellites")
+#     output:
+#         fa_folder = directory(os.path.join(WORKDIR, "results/fa_files/centromeres/a_satellites"))
+#     threads:
+#         config["bgzip_threads"]
+#     log:
+#         "logs/fa_files/centromeres/a_satellites/subset_fa_files.log"
+#     conda:
+#         "envs/standalone/sambedtools.yaml"
+#     shell:
+#         r"""
+#         exec > {log} 2>&1
+#         set -euo pipefail
+
+#         mkdir -p {output.fa_folder}
+
+#         for fa_file in {input.fa_folder}/*HG*.fa.gz {input.fa_folder}/*NA*.fa.gz; do
+#             base=$(basename "$fa_file" .fa.gz)
+#             case "$base" in *HG002*) continue ;; esac
+#             bed={input.bed_dir}/"$base".as_hor_sf.bed
+#             out={output.fa_folder}/"$base"_as.fa.gz
+
+#             bgzip -cd -@ {threads} "$fa_file" > /tmp/"$base".fa
+#             samtools faidx /tmp/"$base".fa
+
+#             sort -k1,1 -k2,2n "$bed" \
+#               | bedtools merge -i - \
+#               | bedtools getfasta -fi /tmp/"$base".fa -bed - \
+#               | bgzip -@ {threads} -c > "$out"
+
+#             rm -f /tmp/"$base".fa /tmp/"$base".fa.fai
+#         done
+#         """
+
+# rule ropebwt3_build_idx:
+#     input:
+#         fa_folder = os.path.join(WORKDIR, "results/fa_files/centromeres/a_satellites")
+#     output:
+#         bwt_fmr = os.path.join(WORKDIR, "data/ropebwt3_idx/hmn462_cm.fmr"),
+#         bwt_fmd = os.path.join(WORKDIR, "data/ropebwt3_idx/hmn462_cm.fmd"),
+#         bwt_ssa = os.path.join(WORKDIR, "data/ropebwt3_idx/hmn462_cm.fmd.ssa"),
+#         bwt_len = os.path.join(WORKDIR, "data/ropebwt3_idx/hmn462_cm.fmd.len.gz")
+#     log:
+#         "logs/idx/ropebwt3_idx_hmn462.log"
+#     threads:
+#         config["ropebwt3_threads"]
+#     conda:
+#         "envs/standalone/ropebwt3.yaml"
+#     shell:
+#         """
+#         ropebwt3 build -t{threads} -bo {output.bwt_fmr} $(ls {input.fa_folder}/*.fa.gz | grep -v '_HG002\.') 2> {log};
+#         ropebwt3 build -i {output.bwt_fmr} -do {output.bwt_fmd} 2>> {log};
+#         ropebwt3 ssa -o {output.bwt_ssa} -s8 -t{threads} {output.bwt_fmd} 2>> {log};
+#         zcat $(ls {input.fa_folder}/*.fa.gz | grep -v '_HG002\.') | seqtk comp | cut -f1,2 | gzip > {output.bwt_len} 2>> {log}
+#         """
+
+# rule extract_snpmers:
+#     input:
+#         vcf = os.path.join(WORKDIR, "results/snps/centromeres/a_satellites/hmn462_unfilt.vcf.gz")
+#     output:
+#         snpmers = os.path.join(WORKDIR, "results/snps/centromeres/a_satellites/hmn462_unfilt.snpmers.tsv")
+#     log:
+#         "logs/snps/centromeres/a_satellites/extract_snpmers_hmn462_unfilt.log"
+#     shell:
+#         r"""
+#         zcat {input.vcf} | awk -F'\t' -v OFS='\t' '!/^#/ {{
+#             n = split($8, a, ";")
+#             for (i = 1; i <= n; i++)
+#                 if (a[i] ~ /^SNPMER=/) {{
+#                     sub(/^SNPMER=/, "", a[i])
+#                     print a[i], $4, $5
+#                 }}
+#         }}' > {output.snpmers} 2> {log}
+#         """
+
+# rule format_snpmers:
+#     input:
+#         snpmers = os.path.join(WORKDIR, "results/snps/centromeres/a_satellites/hmn462_unfilt.snpmers.tsv")
+#     output:
+#         snpmers = os.path.join(WORKDIR, "results/snps/centromeres/a_satellites/hmn462_unfilt.snpmers.fa")
+#     log:
+#         "logs/snps/centromeres/a_satellites/format_snpmers_hmn462_unfilt.log"
+#     script:
+#         "scripts/py/format_snpmers.py"
+        
+
+# rule compute_ropebwt3_hits:
+#     input:
+#         fmd_idx = os.path.join(WORKDIR, "data/ropebwt3_idx/human579.fmd"),
+#         snpmers = os.path.join(WORKDIR, "results/snps/centromeres/a_satellites/hmn462_unfilt.snpmers.fa")
+#     output:
+#         hits = os.path.join(WORKDIR, "results/snps/centromeres/a_satellites/hmn462_unfilt.ropebwt3_hits.bed.gz")
+#     params:
+#         k = config["kmer_length"],
+#         max_hits = 100
+#     threads:
+#         config["ropebwt3_threads"]
+#     log:
+#         "logs/snps/centromeres/a_satellites/compute_ropebwt3_hits_hmn462_unfilt.log"
+#     conda:
+#         "envs/standalone/ropebwt3.yaml"
+#     shell:
+#         """
+#         ropebwt3 mem -t{threads} -l{params.k} -p{params.max_hits} {input.fmd_idx} {input.snpmers} 2> {log} | gzip > {output.hits}
+#         """
+
+# rule get_snps_info:
+#     input:
+#         hits = os.path.join(WORKDIR, "results/snps/centromeres/a_satellites/hmn462_unfilt.ropebwt3_hits.bed.gz"),
+#         anno_table = os.path.join(WORKDIR, "results/annotations/anno_table.bed.gz"),
+#         chrom_table = os.path.join(WORKDIR, "results/annotations/chromalias_table.txt")
+#     output:
+#         info = os.path.join(WORKDIR, "results/snps/centromeres/a_satellites/hmn462_unfilt.info.bed")
+#     params:
+#         k = config["kmer_length"],
+#         threshold = 1
+#     log:
+#         "logs/snps/centromeres/a_satellites/get_snps_info_hmn462_unfilt.log"
+#     conda:
+#         "envs/py/pysam.yaml"
+#     script:
+#         "scripts/py/get_snps_info.py"
+
+# rule filter_vcf:
+#     input:
+#         vcf = os.path.join(WORKDIR, "results/snps/centromeres/a_satellites/hmn462_unfilt.vcf.gz"),
+#         info = os.path.join(WORKDIR, "results/snps/centromeres/a_satellites/hmn462_unfilt.info.bed")
+#     output:
+#         vcf = os.path.join(WORKDIR, "results/snps/centromeres/a_satellites/hmn462_unfilt.unambiguous.sorted.vcf.gz")
+#     params:
+#         script = os.path.join(WORKDIR, "scripts/py/filter_vcf.py")
+#     log:
+#         "logs/snps/centromeres/a_satellites/filter_vcf_hmn462_unfilt.log"
+#     shell:
+#         r"""
+#         python {params.script} {input.vcf} {input.info} 2> {log} | bgzip > {output.vcf};
+#         tabix -p vcf {output.vcf} 2>> {log}
+#         """
 
 
-
-rule process_snps_vcf:
-    input:
-        vcf = os.path.join(WORKDIR, "results/snps/hmn579_unfilt.vcf.gz")
-    output:
-        cleaned_vcf = os.path.join(WORKDIR, "results/snps/hmn579_unfilt.cleaned.vcf.gz"),
-        sorted_vcf = os.path.join(WORKDIR, "results/snps/hmn579_unfilt.cleaned.sorted.vcf.gz")
-    log:
-        "logs/snps/process_snps_hmn579_unfilt.log"
-    threads:
-        8
-    conda:
-        "envs/standalone/bcftools.yaml"
-    shell:
-        """
-        set -Eeuo pipefail;
-        zcat {input.vcf} | sed 's/CHM13#0#//g' | \
-        bcftools view -e 'CHROM="." || POS=0' - --threads {threads} -Oz -o {output.cleaned_vcf} 2> {log};
-        bcftools sort {output.cleaned_vcf} -Oz -o {output.sorted_vcf} 2>> {log};
-        tabix -p vcf {output.sorted_vcf} 2>> {log}
-        """
-
-rule split_snps_vcf:
-    input:
-        vcf = os.path.join(WORKDIR, "results/snps/hmn579_unfilt.cleaned.sorted.vcf.gz"),
-        no_xy_bed = os.path.join(WORKDIR, "results/centromeres/chm13v2.0_censat_v2.1.no_xy.bed"),
-        no_xy_cm_bed = os.path.join(WORKDIR, "results/centromeres/chm13v2.0_censat_v2.1.no_xy.centromeric.bed"),
-        no_xy_pcm_bed = os.path.join(WORKDIR, "results/centromeres/chm13v2.0_censat_v2.1.no_xy.pericentromeric.bed")
-    output:
-        cm_vcf = os.path.join(WORKDIR, "results/snps/hmn579_unfilt.cleaned.sorted.centromeric.vcf.gz"),
-        pcm_vcf = os.path.join(WORKDIR, "results/snps/hmn579_unfilt.cleaned.sorted.pericentromeric.vcf.gz"),
-        noncm_vcf = os.path.join(WORKDIR, "results/snps/hmn579_unfilt.cleaned.sorted.non_centromeric.vcf.gz")
-    log:
-        "logs/snps/filter_snps_hmn579_unfilt.log"
-    conda:
-        "envs/standalone/bedtools.yaml"
-    shell:
-        """
-        bedtools intersect -u -a {input.vcf} -b {input.no_xy_cm_bed} -header 2> {log} | bgzip -c > {output.cm_vcf};
-        tabix -p vcf {output.cm_vcf} 2>> {log};
-
-        bedtools intersect -u -a {input.vcf} -b {input.no_xy_pcm_bed} -header 2> {log} | bgzip -c > {output.pcm_vcf};
-        tabix -p vcf {output.pcm_vcf} 2>> {log};
-
-        bedtools intersect -v -a {input.vcf} -b {input.no_xy_bed} -header 2>> {log} | bgzip -c > {output.noncm_vcf};
-        tabix -p vcf {output.noncm_vcf} 2>> {log}
-        """
-
-rule compute_clusters:
-    input:
-        vcf = os.path.join(WORKDIR, "results/snps/hmn579_unfilt.cleaned.sorted.{region}.vcf.gz"),
-        md_path = config["md_path"]
-    output:
-        md_path = os.path.join(WORKDIR, "results/clusters/hmn579_unfilt.cleaned.sorted.{region}.clusters.tsv")
-    params:
-        chroms = config["chroms"],
-        metrics = config["metrics"],
-        n_neighbors = 20,
-        n_components = 5,
-        random_seed = 42
-    log:
-        "logs/clusters/{region}/compute_clusters.log"
-    conda:
-        "envs/py/ml.yaml"
-    script:
-        "scripts/py/compute_clusters.py"
+# rule compute_clusters:
+#     input:
+#         vcf = os.path.join(WORKDIR, "results/snps/hmn579_unfilt.cleaned.sorted.{region}.vcf.gz"),
+#         md_path = config["md_path"]
+#     output:
+#         md_path = os.path.join(WORKDIR, "results/clusters/hmn579_unfilt.cleaned.sorted.{region}.clusters.tsv")
+#     params:
+#         chroms = config["chroms"],
+#         metrics = config["metrics"],
+#         n_neighbors = 20,
+#         n_components = 5,
+#         random_seed = 42
+#     log:
+#         "logs/clusters/{region}/compute_clusters.log"
+#     conda:
+#         "envs/py/ml.yaml"
+#     script:
+#         "scripts/py/compute_clusters.py"

@@ -2,7 +2,7 @@ CC=			gcc
 CFLAGS=		-g -Wall -O2
 CPPFLAGS=
 INCLUDES=	
-OBJS=		bed.o count.o htab.o kthread.o parser.o sys.o utils.o
+OBJS=		bed.o count.o shtab.o kthread.o parser.o sys.o utils.o
 PROG=		pgtools
 LIBS=		-lm -lz -lpthread
 
@@ -30,11 +30,11 @@ depend:
 
 # DO NOT DELETE
 
-main.o:    main.c    htab.h utils.h ketopt.h sys.h
+main.o:    main.c    shtab.h utils.h ketopt.h sys.h
 bed.o:     bed.c     bed.h khashl.h utils.h
-count.o:   count.c   bed.h htab.h utils.h kseq.h kthread.h parser.h
-htab.o:    htab.c    htab.h utils.h khashl.h parser.h kseq.h
+count.o:   count.c   bed.h shtab.h utils.h kseq.h kthread.h parser.h
+shtab.o:   shtab.c   shtab.h utils.h khashl.h parser.h kseq.h
 kthread.o: kthread.c kthread.h
 parser.o:  parser.c  parser.h kseq.h utils.h
 sys.o:     sys.c     sys.h
-utils.o:   utils.c   htab.h utils.h
+utils.o:   utils.c   shtab.h utils.h

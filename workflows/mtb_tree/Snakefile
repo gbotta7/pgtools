@@ -32,7 +32,7 @@ rule call_SNPs:
         vcf = os.path.join(WORKDIR, "results/snps/mtb152_filt.vcf")
     params:
         k = 21,
-        m = 0.98,
+        m = 0.9,
         f = 2
     log:
         "logs/snps/call_snps_mtb152_filt.log"
@@ -41,14 +41,14 @@ rule call_SNPs:
     shell:
         """
         set -Eeuo pipefail;
+        shopt -s extglob;
         pgtools count -v \
             -k {params.k} \
             -m {params.m} \
             -t {threads} \
             -f {params.f} \
-            -r {input.fa_folder}/H37Rv.fa.gz \
             -o {output.vcf} \
-            {input.fa_folder}/*.fa.gz 2> {log}
+            {input.fa_folder}/!(H37Rv).fa.gz 2> {log}
         """
 
 rule convert_vcf_to_fasta_aln:

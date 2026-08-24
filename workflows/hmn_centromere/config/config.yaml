@@ -1,14 +1,22 @@
 snakemake_min_version: "7.30.1"
-mambaforge_version: "24.7.1-0"
+# mambaforge_version: "24.7.1-0"
 
-pgtools_threads: 12
-ropebwt3_threads: 24
+pgtools_threads: 3
+# bgzip_threads: 10
+# ropebwt3_threads: 18
 kmer_length: 31
 
 # centromeres_url: "https://s3-us-west-2.amazonaws.com/human-pangenomics/T2T/CHM13/assemblies/annotation/chm13v2.0_censat_v2.1.bed"
 hprc_url: "https://human-pangenomics.s3.amazonaws.com"
+# hs19_url: "https://ftp.ensembl.org/pub/grch37/release-92/fasta/homo_sapiens/dna/Homo_sapiens.GRCh37.dna.primary_assembly.fa.gz"
+cenhap_regions_url: "https://elifesciences.org/download/aHR0cHM6Ly9jZG4uZWxpZmVzY2llbmNlcy5vcmcvYXJ0aWNsZXMvNDI5ODkvZWxpZmUtNDI5ODktZmlnMi1kYXRhMS12MS50ZHM-/elife-42989-fig2-data1-v1.tds?_hash=9UuPoZDgVIcS0Oqkp8OSNrFl8vh8gT7pzN09c2%2FbZh0%3D"
 fa_folder: "/hlilab/21data/human-asm/indices/asm"
-md_path: "/hlilab/21data/human-asm/indices/human579.meta.tsv"
+sample_list_path: "/hlilab/gianfranco/pgtools/workflows/hmn_centromere/config/sample_list.txt"
+md_path: "/hlilab/gianfranco/pgtools/workflows/hmn_centromere/data/metadata/human579.meta.tsv"
 
-chroms: ['chr6', 'chr10', 'chr11', 'chr12']
-metrics: ['manhattan', 'euclidean']
+# chroms: ['chr6', 'chr10', 'chr11', 'chr12']
+# metrics: ["manhattan", "euclidean"]
+regions: ["centromeric", "pericentromeric"]
+# chroms: ["chr2", "chr8", "chr10", "chr17", "chr22"]
+chroms: ["chr1", "chr2", "chr3", "chr4", "chr5", "chr6", "chr7", "chr8", "chr9", "chr10", "chr11", "chr12", "chr13", "chr14", "chr15", "chr16", "chr17", "chr18", "chr19", "chr20", "chr21", "chr22"]
+ranges: {"100kb": 1.0e5, "500kb": 5.0e5, "1Mb": 1.0e6, "5Mb": 5.0e6}

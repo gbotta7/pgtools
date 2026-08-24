@@ -9,7 +9,7 @@
 #include "bed.h"
 #include "kseq.h"
 #include "kthread.h"
-#include "htab.h"
+#include "shtab.h"
 #include "parser.h"
 #include "utils.h"
 
@@ -17,10 +17,10 @@ KSEQ_INIT(gzFile, gzread)
 
 typedef struct {
     int64_t n_ins;
-    ch_seq_t *a;
-    ch_info_t *i;  // snp pass
+    seq_t *a;
+    seq_info_t *i;  // snp pass
     int n, m;
-} ch_buf_t;
+} buf_t;
 
 typedef struct {
 	pthread_mutex_t mutex;
@@ -39,7 +39,7 @@ typedef struct {
 	bedmap1_t *b;
 	const char *fa_fn;
 	const char *bed_fn;
-    pg_mht_t *h;
+    pg_msht_t *h;
 	int filt;				// whether the intermediate k-mer filtering has been done for the first time, do not insert new k-mers after it is set to 1
 	int cnt;				// whether it is first or second pass
 	int snp;				// whether you count SNP-mers or k-mers
@@ -49,14 +49,14 @@ typedef struct {
 typedef struct { 			// data structure for each step in kt_pipeline()
     pldat_t *p;
 	int *len;
-	ch_buf_t *buf;
+	buf_t *buf;
     char **seq;
 	int *name_idx;			// contig names' index
     int n, m, sum_len, nk;
 } stepdat_t;
 
 
-static inline int ch_get_name_idx(cnames_t *nt, const char *name) {
+static inline int get_name_idx(cnames_t *nt, const char *name) {
     if (nt->n > 0 && strcmp(nt->names[nt->n - 1], name) == 0)
         return nt->n - 1;
 
@@ -70,10 +70,10 @@ static inline int ch_get_name_idx(cnames_t *nt, const char *name) {
 }
 
 
-static inline void ch_insert_buf(ch_buf_t *buf, pldat_t *p, uint64_t flanks, uint64_t center, uint32_t pos, int cname_idx, uint8_t strand) // insert a k-mer $y to a linear buffer
+static inline void insert_buf(buf_t *buf, pldat_t *p, uint64_t flanks, uint64_t center, uint32_t pos, int cname_idx, uint8_t strand) // insert a k-mer $y to a linear buffer
 {	
 	int pre = flanks & ((1<<p->opt->pre) - 1);
-	ch_buf_t *b = &buf[pre];
+	buf_t *b = &buf[pre];
 
 	if (p->cnt && p->opt->write_info) {
 		if (b->n == b->m) {
@@ -97,7 +97,7 @@ static inline void ch_insert_buf(ch_buf_t *buf, pldat_t *p, uint64_t flanks, uin
 	b->n++;
 }
 
-static void count_seq_buf(ch_buf_t *buf, pldat_t *p, int len, const char *seq, int cname_idx) // insert k-mers in $seq to linear buffer $buf
+static void count_seq_buf(buf_t *buf, pldat_t *p, int len, const char *seq, int cname_idx) // insert k-mers in $seq to linear buffer $buf
 {
 	int i, l;
 	uint64_t hash_mask = (1ULL<<((p->opt->k-1)*2)) - 1; // to hash only the flanks
@@ -120,7 +120,7 @@ static void count_seq_buf(ch_buf_t *buf, pldat_t *p, int len, const char *seq, i
 
 				if (flanks == rev_flanks) continue;											// palindromic
 			
-				ch_insert_buf(buf, p, pg_hash64(flanks, hash_mask), center, (uint32_t)i-p->opt->k/2, cname_idx, strand); // i-k/2 is the 0-based position of center
+				insert_buf(buf, p, pg_hash64(flanks, hash_mask), center, (uint32_t)i-p->opt->k/2, cname_idx, strand); // i-k/2 is the 0-based position of center
 			}
 		} else l = 0, x[0] = x[1] = 0; // if there is an "N", restart
 	}
@@ -130,31 +130,31 @@ static void count_seq_buf(ch_buf_t *buf, pldat_t *p, int len, const char *seq, i
 static void worker_for(void *data, long i, int tid) // callback for kt_for()
 {
 	stepdat_t *s = (stepdat_t*)data;
-	ch_buf_t *b = &s->buf[i];
-	pg_mht_t *h = s->p->h;
+	buf_t *b = &s->buf[i];
+	pg_msht_t *h = s->p->h;
 
 	if (s->p->cnt && s->p->opt->write_info)
-		pg_mht_count_list(h, b->n, b->a, b->i);
+		pg_msht_count_list(h, b->n, b->a, b->i);
 	else if (s->p->cnt && !s->p->opt->write_info)
-		pg_mht_count_list(h, b->n, b->a, 0);
+		pg_msht_count_list(h, b->n, b->a, 0);
 	else
-		b->n_ins += pg_mht_insert_list(h, b->n, b->a, s->p->filt);
+		b->n_ins += pg_msht_insert_list(h, b->n, b->a, s->p->filt);
 }
 
 static void clear_for(void *data, long i, int tid) // callback for kt_for()
 {
 	pldat_t *p = (pldat_t*)data;
 	if (p->cnt)
-		pg_mht_clear2(p->h, i);
+		pg_msht_clear2(p->h, i, p->opt->write_info);
 	else
-		pg_mht_clear1(p->h, i, p->opt->filt_type, p->opt->mko);
+		pg_msht_clear1(p->h, i, p->opt->filt_type, p->opt->mko);
 }
 
 static void filter_for(void *data, long i, int tid) // callback for kt_for()
 {
 	pldat_t *p = (pldat_t*)data;
 	int ff = p->f->n_done == p->f->n_fns; 
-	int64_t n_del = pg_mht_filter(p->h, i, p->f->n_done, p->f->n_fns, ff, p->opt);
+	int64_t n_del = pg_msht_filter(p->h, i, p->f->n_done, p->f->n_fns, ff, p->opt);
 
 	pthread_mutex_lock(&p->h->mutex);
 	p->h->n_del_tot += n_del;
@@ -207,7 +207,7 @@ static void *worker_pipeline(void *data, int step, void *in) // callback for kt_
 			// mask the sequence outside the BED entries if a BED file is provided
 			if (c) mask_fa(s->seq[s->n], l, c);
 
-			s->name_idx[s->n] = p->cnt ? ch_get_name_idx(&p->h->cnames, p->ks->name.s) : -1;
+			s->name_idx[s->n] = p->cnt ? get_name_idx(&p->h->cnames, p->ks->name.s) : -1;
 			s->len[s->n++] = l;
 			s->sum_len += l;
 			s->nk += nk_ctg;
@@ -218,7 +218,7 @@ static void *worker_pipeline(void *data, int step, void *in) // callback for kt_
 		else return s;
 	} else if (step == 1) { // step 2: extract k-mers
 		stepdat_t *s = (stepdat_t*)in;
-		int i, n = 1<<p->opt->pre, m;
+		int i, n = 1 << p->opt->pre, m;
 		CALLOC(s->buf, n);
 		m = (int)(s->nk * 1.2 / n) + 1;
 		for (i = 0; i < n; ++i) {
@@ -258,7 +258,7 @@ static void *worker_pipeline(void *data, int step, void *in) // callback for kt_
 	return 0;
 }
 
-pg_mht_t *pg_detect(const char **fa_fns, const char **bed_fns, const int n_fns, const pg_opt_t *opt, const char *out_fn)
+pg_msht_t *pg_detect(const char **fa_fns, const char **bed_fns, const int n_fns, const pg_opt_t *opt, const char *out_fn)
 {	
 	filedat_t fd;
 	fd.fa_fns = fa_fns;
@@ -269,7 +269,7 @@ pg_mht_t *pg_detect(const char **fa_fns, const char **bed_fns, const int n_fns, 
 
 	pldat_t pl;
 	pl.f = &fd;
-	pl.h = pg_mht_init(opt->k, opt->pre);
+	pl.h = pg_msht_init(opt->k, opt->pre, opt->write_info);
 	pl.opt = opt;
 	pl.filt = 0;
 	pl.cnt = 0; // first pass
@@ -320,9 +320,9 @@ pg_mht_t *pg_detect(const char **fa_fns, const char **bed_fns, const int n_fns, 
 				fprintf(stderr, "[M::%s] Filtering k-mers\n", __func__);
 			}
 			kt_for(pl.opt->n_threads, filter_for, &pl, 1 << pl.opt->pre);
-			pg_mht_tighten(pl.h);
+			pg_msht_tighten(pl.h);
 			if (opt->verbose) {
-				fprintf(stderr, "[M::%s] Current number of k-mer entries in the hash table: %ld\n", __func__, pl.h->n_ins_tot);
+				fprintf(stderr, "[M::%s] Current number of SNP-mer entries in the hash table: %ld\n", __func__, pl.h->n_ins_tot);
 			}
 		}
 
@@ -334,16 +334,17 @@ pg_mht_t *pg_detect(const char **fa_fns, const char **bed_fns, const int n_fns, 
 	if (n_fns > 1) {
 		fprintf(stderr, "[M::%s] Final filtering to get specific k-mers\n", __func__);
 		kt_for(pl.opt->n_threads, filter_for, &pl, 1 << pl.opt->pre); // final filter
-		pg_mht_tighten(pl.h);
+		pg_msht_tighten(pl.h);
 		if (opt->verbose) {
-			fprintf(stderr, "[M::%s] Current number of k-mer entries in the hash table: %ld\n", __func__, pl.h->n_ins_tot);
+			fprintf(stderr, "[M::%s] Current number of SNP-mer entries in the hash table: %ld\n", __func__, pl.h->n_ins_tot);
 		}
 	}
 
-	pg_mht_tighten(pl.h);
+	pg_msht_tighten(pl.h);
 
 	if (out_fn) {
-		pg_dump_kmers(out_fn, pl.h, pl.snp);
+		if (pl.snp)
+			pg_dump_snpmers(out_fn, pl.h);
 	}
 	
     return pl.h;
@@ -352,8 +353,8 @@ pg_mht_t *pg_detect(const char **fa_fns, const char **bed_fns, const int n_fns, 
 
 static void rearrange_for(void *data, long i, int tid) // callback for kt_for()
 {
-	pg_mht_t *h = (pg_mht_t*)data;
-	pg_mht_rearrange(h, i);
+	pg_msht_t *h = (pg_msht_t*)data;
+	pg_msht_rearrange(h, i);
 }
 
 
@@ -370,11 +371,7 @@ static void *worker_file(void *data)
 			break;
 		}
 		if (pl->opt->verbose) {
-			if (pl->opt->snp) {
-				fprintf(stderr, "[M::%s] Counting SNP-mers in genome number %d\n", __func__, fd->n_done);
-			} else {
-				fprintf(stderr, "[M::%s] Counting k-mers in genome number %d\n", __func__, fd->n_done);
-			}
+			fprintf(stderr, "[M::%s] Counting SNP-mers in genome number %d\n", __func__, fd->n_done);
 		}
         pthread_mutex_unlock(&fd->mutex);
 		
@@ -407,18 +404,19 @@ static void *worker_file(void *data)
 		char gnm_path[4096];
 		snprintf(gnm_path, sizeof gnm_path, "%s/gnm.%d.tsv", fd->tmpdir, i);
 
-		write_tsv(gnm_path, pl->h, pl->fa_fn, pl->snp);
+		if (pl->snp)
+			write_snpmer_tsv(gnm_path, pl->h, pl->fa_fn, pl->opt->write_info);
 
-		kt_for(pl->f_threads, clear_for, pl, 1 << pl->opt->pre); // clear mht in this thread
+		kt_for(pl->f_threads, clear_for, pl, 1 << pl->opt->pre); // clear msht in this thread
     }
 	
     pthread_exit(0);
 }
 
 
-void pg_count(const char **fa_fns, const char **bed_fns, const int n_fns, int64_t n_kmers, const pg_opt_t *opt, pg_mht_t *h, const char *out_fn)
+void pg_count(const char **fa_fns, const char **bed_fns, const int n_fns, int64_t n_kmers, const pg_opt_t *opt, pg_msht_t *h, const char *out_fn)
 {	
-	// shift bits of the hash table values to count k-mers
+	// shift bits of the hash table values to count SNP-mers
 	kt_for(opt->n_threads, rearrange_for, h, 1 << opt->pre);
 
 	filedat_t fd;
@@ -447,7 +445,7 @@ void pg_count(const char **fa_fns, const char **bed_fns, const int n_fns, int64_
 	for (int i = 0; i < n_batch; ++i) {
 		pl[i].f = &fd;
 		pl[i].f_threads = batch_threads[i];
-		pl[i].h = pg_mht_copy(h);
+		pl[i].h = pg_msht_copy(h, opt->write_info);
 		pl[i].opt = opt;
 		pl[i].cnt = 1; // second pass
 		pl[i].snp = opt->snp;
@@ -455,7 +453,7 @@ void pg_count(const char **fa_fns, const char **bed_fns, const int n_fns, int64_
 	}
 	for (int i = 0; i < n_batch; ++i) {
 		pthread_join(tid[i], 0);
-		pg_mht_destroy(pl[i].h);
+		pg_msht_destroy(pl[i].h, pl[i].opt->write_info);
 	}
 
     free(tid); free(pl); free(batch_threads);
@@ -476,5 +474,5 @@ void pg_count(const char **fa_fns, const char **bed_fns, const int n_fns, int64_
 	}
 	remove(tmpdir);
 
-	pg_mht_destroy(h);
+	// pg_msht_destroy(h, opt);
 }

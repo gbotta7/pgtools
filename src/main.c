@@ -2,14 +2,14 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "htab.h"
+#include "shtab.h"
 #include "ketopt.h"
 #include "sys.h"
 #include "utils.h"
 
 int main_detect(int argc, char *argv[])
 {
-	pg_mht_t *h;
+	pg_msht_t *h;
 	char *fn_out = 0;
 	char *bed_list_fn = 0;
 	char **bed_fns = 0;
@@ -77,6 +77,13 @@ int main_detect(int argc, char *argv[])
 	}
 
 	// warnings
+	if (opt.snp) {
+		if (opt.pre < F_VAL_INFO_BITS) {
+			fprintf(stderr, "[E::%s] -p/--pre must not be smaller than %d\n", __func__, F_VAL_INFO_BITS);
+			return 0;
+		}
+	}
+
 	if (opt.k >= 32 || !(opt.k % 2)) {
 		fprintf(stderr, "ERROR: -k must be odd and <=31\n");
 
@@ -128,7 +135,7 @@ int main_detect(int argc, char *argv[])
 
 int main_count(int argc, char *argv[])
 {   
-    pg_mht_t *h;
+    pg_msht_t *h;
 	char *fn_out = 0;
 	char *bed_list_fn = 0;
 	char **bed_fns = 0;
@@ -250,7 +257,7 @@ int main_count(int argc, char *argv[])
 		fprintf(stderr, "[W::%s] -s/--kmers given: k-mers are loaded directly from '%s'\n-f/--filt_type, --msf, --maf, and --mko have no effect in this mode (they only apply to pgtools detect)\n", __func__, kmer_file);
 		// repopulate hash table from SNP-mers file
 		fprintf(stderr, "[M::%s] repopulating hash table from file '%s'\n", __func__, kmer_file);
-		h = pg_mht_repopulate(kmer_file, &opt);
+		h = pg_msht_repopulate(kmer_file, &opt);
 	}
 	else {
 		h = pg_detect(argv + o.ind, n_bed ? bed_fns : 0, n_fa, &opt, 0);
