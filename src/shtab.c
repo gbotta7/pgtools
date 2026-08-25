@@ -706,7 +706,7 @@ void write_snpmer_tsv(const char *out_fn, pg_msht_t *h, const char *gnm_fn, int 
 					int32_t idx = vi->i[j].seq_idx;
 					const char *cname = h->cnames.names[idx];
 
-					fprintf(fp, "\t%s,%c,%u", cname, nt4_seq_table[allele], pos);
+					fprintf(fp, "%c%s:%c:%u", j == 0 ? '\t' : ',', cname, nt4_seq_table[allele], pos);
 				}
 			}
 			fprintf(fp, "\n");
