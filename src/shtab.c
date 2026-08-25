@@ -633,7 +633,12 @@ void write_snpmer_tsv(const char *out_fn, pg_msht_t *h, const char *gnm_fn, int 
 			break;
 		}
 	}
-	fprintf(fp, "snpmer\t%s\n", sample_name);
+	if (w) {
+		fprintf(fp, "snpmer\t%s\tpositions\n", sample_name);
+	} else {
+		fprintf(fp, "snpmer\t%s\n", sample_name);
+	}
+	
 
 	pg_siht1_t *ig = NULL;
 	pg_sht1_t *g = NULL;
