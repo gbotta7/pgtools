@@ -172,12 +172,12 @@ static void *worker_pipeline(void *data, int step, void *in) // callback for kt_
 			if (p->b) {
 				c = bed_get(p->b, p->ks->name.s);	// get contig bed entries
 				if (c == 0) {
-					// if (v) fprintf(stderr, "[E::%s] contig %s not found in BED file %s\n", __func__, p->ks->name.s, p->bed_fn);
+					// if (p->opt->verbose) fprintf(stderr, "[E::%s] contig %s not found in BED file %s\n", __func__, p->ks->name.s, p->bed_fn);
 					continue;
 				};
 				nk_ctg = bed_nk(c, l, p->opt->k); // compute number of possible k-mers
 				if (nk_ctg == 0) {
-					// if (v) fprintf(stderr, "[E::%s] contig %s has no regions longer than %d bases in the BED file %s\n", __func__, p->ks->name.s, p->opt->k, p->bed_fn);
+					// if (p->opt->verbose) fprintf(stderr, "[E::%s] contig %s has no regions longer than %d bases in the BED file %s\n", __func__, p->ks->name.s, p->opt->k, p->bed_fn);
 					continue;
 				};
 			} else {
@@ -212,12 +212,10 @@ static void *worker_pipeline(void *data, int step, void *in) // callback for kt_
 		m = (int)(s->nk * 1.2 / n) + 1;
 		for (i = 0; i < n; ++i) {
 			s->buf[i].m = m;
+			CALLOC(s->buf[i].a, m);
 			if (p->cnt && p->opt->write_info) {
-				CALLOC(s->buf[i].a, m);
 				CALLOC(s->buf[i].i, m);
 			}
-			else
-				CALLOC(s->buf[i].a, m);
 		}
 		for (i = 0; i < s->n; ++i) {
 			count_seq_buf(s->buf, p, s->len[i], s->seq[i], s->name_idx[i]); // CHANGED CONDITION

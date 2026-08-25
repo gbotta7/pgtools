@@ -3,7 +3,7 @@ CFLAGS=		-g -Wall -O2
 CPPFLAGS=
 INCLUDES=	
 OBJS=		bed.o count.o shtab.o kthread.o parser.o sys.o utils.o
-PROG=		pgtools
+PROG=		pgkmc
 LIBS=		-lm -lz -lpthread
 
 ifneq ($(asan),)
