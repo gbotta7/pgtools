@@ -38,79 +38,6 @@ pg_msht_t *pg_msht_init(int k, int pre, int w)
 	return h;
 }
 
-pg_sht_t *pg_sht_copy(const pg_sht_t *src) {
-    if (!src) return NULL;
-    pg_sht_t *dst = (pg_sht_t*)kcalloc(1, sizeof(pg_sht_t));
-    dst->bits  = src->bits;
-    dst->count = src->count;
-    khint_t n_buckets = kh_capacity(src);
-    if (n_buckets) {
-        size_t flag_size = __kh_fsize(n_buckets) * sizeof(khint32_t);
-        dst->used = (khint32_t*)kmalloc(flag_size);
-        memcpy(dst->used, src->used, flag_size);
-        size_t bucket_size = n_buckets * sizeof(pg_sht_t_m_bucket_t);
-        dst->keys = kmalloc(bucket_size);
-        memcpy(dst->keys, src->keys, bucket_size);
-    }
-    return dst;
-}
-
-static void cnames_copy(cnames_t *dst, const cnames_t *src) {
-    dst->n = src->n;
-    dst->m = src->m;
-    if (src->m == 0) {
-		dst->names = NULL;
-		return;
-	}
-    dst->names = (char**)calloc(src->m, sizeof(char*));
-    for (int j = 0; j < src->n; ++j)
-        dst->names[j] = src->names[j] ? strdup(src->names[j]) : NULL;
-}     
-
-pg_msht_t *pg_msht_copy(const pg_msht_t *src, int w) {
-    pg_msht_t *dst = (pg_msht_t*)calloc(1, sizeof(pg_msht_t));
-    dst->k = src->k;
-    dst->pre = src->pre;
-    dst->n_ins_tot = src->n_ins_tot;
-    dst->n_del_tot = src->n_del_tot;
-	pthread_mutex_init(&dst->mutex, 0); // dst has own mutex
-	cnames_copy(&dst->cnames, &src->cnames); 
-    int n = 1 << src->pre;
-	if (w) {
-		dst->ih = (pg_siht1_t*)calloc(n, sizeof(pg_siht1_t));
-	} else {
-		dst->h = (pg_sht1_t*)calloc(n, sizeof(pg_sht1_t));
-	}
-	
-    for (int i = 0; i < n; ++i) {
-		if (w) { // convert sht to siht
-			pg_sht_t *sh  = src->h[i].h;      // source: uint64_t -> uint32_t
-			pg_siht_t *dih = pg_siht_init();  // dest: uint64_t -> sci_t
-
-			khint_t k;
-			for (k = 0; k < kh_end(sh); ++k) {
-				if (!kh_exist(sh, k)) continue;
-
-				uint64_t key = kh_key(sh, k);
-				uint32_t cnt = kh_val(sh, k);
-
-				int absent;
-				khint_t d_k = pg_siht_put(dih, key, &absent); // no need to shift here, key is taken from hash table
-				sci_t *v = &kh_val(dih, d_k);
-				v->i = 0;
-				v->n = 0;
-				v->m = 0;
-				v->cnt = cnt;
-			}
-
-			dst->ih[i].ih = dih;
-		} else {
-			dst->h[i].h = pg_sht_copy(src->h[i].h);
-		}
-	}
-    return dst;
-}
-
 void pg_siht1_destroy(pg_siht1_t *ih)
 {
     khint_t k;
@@ -452,7 +379,7 @@ void pg_msht_count_list(pg_msht_t *h, int n, const seq_t *a, seq_info_t *b)
 				REALLOC(vi->i, vi->m);
 			}
 			int idx = vi->n++;
-			vi->i[idx].postrand = i_postrand_pack(b[j].pos, b[j].strand);
+			vi->i[idx].posallele = i_posallele_pack(b[j].pos, b[j].allele);
 			vi->i[idx].seq_idx = b[j].idx;
 		} else { // without info
 			khint_t k = pg_sht_get(g->h, key << F_VAL_INFO_BITS);
@@ -588,20 +515,40 @@ pg_msht_t *pg_msht_repopulate(const char *kmer_file, pg_opt_t *opt)
 			}
 			continue;
 		}
+
 		h_flanks = pg_hash64(flanks, hash_mask);
 		bucket = h_flanks & ((1<<opt->pre) - 1);
-		pg_sht1_t *g = &h->h[bucket]; // get hash table partition for the SNP-mer
 		key = h_flanks >> opt->pre;
 
-		k = pg_sht_put(g->h, key << F_VAL_INFO_BITS, &absent);
-		if (absent) {
-			++n_ins;
-			kh_key(g->h, k) = key << F_VAL_INFO_BITS | f_key_pack(0, 0, 0, cb2, cb1);
-			kh_val(g->h, k) = 0;
+		if (opt->write_info) {
+			pg_siht1_t *ig = &h->ih[bucket];
+			k = pg_siht_put(ig->ih, key << F_VAL_INFO_BITS, &absent);
+			if (absent) {
+				++n_ins;
+				kh_key(ig->ih, k) = key << F_VAL_INFO_BITS | s_key_pack(cb2, cb1);
+				sci_t *v = &kh_val(ig->ih, k);
+				v->i = NULL;
+				v->n = 0;
+				v->m = 0;
+				v->cnt = 0;
+			} else {
+				n_skipped++;
+				if (opt->verbose) {
+					fprintf(stderr, "[E::%s] skipped duplicated SNP-mer %s%c%s, just kept once\n", __func__, left, a1, right);
+				}
+			}
 		} else {
-			n_skipped++;
-			if (opt->verbose) {
-				fprintf(stderr, "[E::%s] skipped duplicated SNP-mer %s%c%s, just kept once\n", __func__, left, a1, right);
+			pg_sht1_t *g = &h->h[bucket];
+			k = pg_sht_put(g->h, key << F_VAL_INFO_BITS, &absent);
+			if (absent) {
+				++n_ins;
+				kh_key(g->h, k) = key << F_VAL_INFO_BITS | f_key_pack(0, 0, 0, cb2, cb1);
+				kh_val(g->h, k) = 0;
+			} else {
+				n_skipped++;
+				if (opt->verbose) {
+					fprintf(stderr, "[E::%s] skipped duplicated SNP-mer %s%c%s, just kept once\n", __func__, left, a1, right);
+				}
 			}
 		}
 	}
@@ -658,7 +605,7 @@ void pg_dump_snpmers(const char *fn, pg_msht_t *h)
 	if (fp != stdout) fclose(fp);
 }
 
-void write_snpmer_tsv(const char *out_fn, pg_msht_t *h, const char *gnm_fn, int w)
+void write_snpmer_tsv(const char *out_fn, pg_msht_t *h, const char *gnm_fn, int w, int w_mko)
 {
 	FILE *fp = fopen(out_fn, "w");
 	if (!fp) {
@@ -688,8 +635,8 @@ void write_snpmer_tsv(const char *out_fn, pg_msht_t *h, const char *gnm_fn, int 
 	}
 	fprintf(fp, "snpmer\t%s\n", sample_name);
 
-	pg_siht1_t *ig;
-	pg_sht1_t *g;
+	pg_siht1_t *ig = NULL;
+	pg_sht1_t *g = NULL;
 	int mid = h->k >> 1;
 	int right_off = mid + 5;
 	uint64_t hash_mask = (1ULL << ((h->k - 1) * 2)) - 1, key, flanks, cb1, cb2;
@@ -703,9 +650,15 @@ void write_snpmer_tsv(const char *out_fn, pg_msht_t *h, const char *gnm_fn, int 
 		} else {
 			g = &h->h[i];
 		}
-		
-		for (khint_t k = 0; k < kh_end(g->h); ++k) {
-			if (!kh_exist(g->h, k)) continue;
+
+		khint_t kend = w ? kh_end(ig->ih) : kh_end(g->h);
+		for (khint_t k = 0; k < kend; ++k) {
+			if (w) {
+				if (!kh_exist(ig->ih, k)) continue;
+			} else {
+				if (!kh_exist(g->h, k)) continue;
+			}
+
 			if (w) {
 				key = kh_key(ig->ih, k);
 				flanks = pg_hash64_inv((((key >> F_VAL_INFO_BITS) << h->pre)) | (uint64_t)i, hash_mask);
@@ -723,7 +676,7 @@ void write_snpmer_tsv(const char *out_fn, pg_msht_t *h, const char *gnm_fn, int 
 				cnt1 = s_val_count1(v);
 				cnt2 = s_val_count2(v);
 			}
-			
+
 			// write SNP-mer
 			// rebuild "left[a1/a2]right"
 			for (int j = 0; j < mid; ++j)
@@ -737,68 +690,82 @@ void write_snpmer_tsv(const char *out_fn, pg_msht_t *h, const char *gnm_fn, int 
 			seq[mid + 4] = ']';
 			seq[h->k + 4] = '\0';
 
-			fprintf(fp, "%s\t%u,%u\n", seq, cnt1, cnt2);
+			fprintf(fp, "%s\t%u,%u", seq, cnt1, cnt2);
+
+			if (w) {
+				int occ = vi->n < w_mko ? vi->n : w_mko;
+				for (int j = 0; j < occ; ++j) {
+					uint32_t posallele = vi->i[j].posallele;
+					uint32_t pos = i_val_pos(posallele);
+					uint32_t allele = i_val_allele(posallele);
+					int32_t idx = vi->i[j].seq_idx;
+					const char *cname = h->cnames.names[idx];
+
+					fprintf(fp, "\t%s,%c,%u", cname, nt4_seq_table[allele], pos);
+				}
+			}
+			fprintf(fp, "\n");
 		}
 	}
 
 	fclose(fp);
 }
 
-void merge_tsvs(const char *out_fn, const char *tmpdir, const char **fa_fns, int n_fns, int n_rows)
-{
-	FILE **fps = malloc(n_fns * sizeof(FILE*));
-	for (int i = 0; i < n_fns; ++i) {
-		char p[4096];
-		snprintf(p, sizeof p, "%s/gnm.%d.tsv", tmpdir, i);
-		fps[i] = fopen(p, "r");
-		if (!fps[i])
-			fprintf(stderr, "[M::%s] Failed to open '%s'\n", __func__, p);
-	}
+// void merge_tsvs(const char *out_fn, const char *tmpdir, const char **fa_fns, int n_fns, int n_rows)
+// {
+// 	FILE **fps = malloc(n_fns * sizeof(FILE*));
+// 	for (int i = 0; i < n_fns; ++i) {
+// 		char p[4096];
+// 		snprintf(p, sizeof p, "%s/gnm.%d.tsv", tmpdir, i);
+// 		fps[i] = fopen(p, "r");
+// 		if (!fps[i])
+// 			fprintf(stderr, "[M::%s] Failed to open '%s'\n", __func__, p);
+// 	}
 
-	FILE *out;
-	if ((out = strcmp(out_fn, "-") ? fopen(out_fn, "wb") : stdout) == 0)
-		return;
+// 	FILE *out;
+// 	if ((out = strcmp(out_fn, "-") ? fopen(out_fn, "wb") : stdout) == 0)
+// 		return;
 
-	// header: row-label column from file 0's header, sample names from fa_fns
-	char line[65536];
-	for (int i = 0; i < n_fns; ++i) {
-		if (fps[i]) fgets(line, sizeof line, fps[i]); // discard header line, just advance past it
-		if (i == 0) {
-			line[strcspn(line, "\n")] = '\0';
-			char *tab = strchr(line, '\t');
-			if (tab) *tab = '\0';
-			fprintf(out, "%s", line); // "kmer" or "snpmer"
-		}
+// 	// header: row-label column from file 0's header, sample names from fa_fns
+// 	char line[65536];
+// 	for (int i = 0; i < n_fns; ++i) {
+// 		if (fps[i]) fgets(line, sizeof line, fps[i]); // discard header line, just advance past it
+// 		if (i == 0) {
+// 			line[strcspn(line, "\n")] = '\0';
+// 			char *tab = strchr(line, '\t');
+// 			if (tab) *tab = '\0';
+// 			fprintf(out, "%s", line); // "kmer" or "snpmer"
+// 		}
 
-		const char *bname = strrchr(fa_fns[i], '/');
-		bname = bname ? bname + 1 : fa_fns[i];
-		fprintf(out, "\t%s", bname);
-	}
-	fprintf(out, "\n");
+// 		const char *bname = strrchr(fa_fns[i], '/');
+// 		bname = bname ? bname + 1 : fa_fns[i];
+// 		fprintf(out, "\t%s", bname);
+// 	}
+// 	fprintf(out, "\n");
 
-	// content: one row per k-mer/SNPmer, values from each file's matching line
-	for (int r = 0; r < n_rows; ++r) {
-		for (int i = 0; i < n_fns; ++i) {
-			if (!fps[i] || !fgets(line, 65536, fps[i])) {
-				fprintf(out, "%s.", i ? "\t" : "");
-				continue;
-			}
-			line[strcspn(line, "\n")] = '\0';
+// 	// content: one row per k-mer/SNPmer, values from each file's matching line
+// 	for (int r = 0; r < n_rows; ++r) {
+// 		for (int i = 0; i < n_fns; ++i) {
+// 			if (!fps[i] || !fgets(line, 65536, fps[i])) {
+// 				fprintf(out, "%s.", i ? "\t" : "");
+// 				continue;
+// 			}
+// 			line[strcspn(line, "\n")] = '\0';
 
-			char *tab = strchr(line, '\t');
-			if (!tab) { fprintf(out, "%s.", i ? "\t" : ""); continue; }
-			*tab = '\0';
+// 			char *tab = strchr(line, '\t');
+// 			if (!tab) { fprintf(out, "%s.", i ? "\t" : ""); continue; }
+// 			*tab = '\0';
 
-			if (i == 0) fprintf(out, "%s", line); // row key, from file 0 only
-			fprintf(out, "\t%s", tab + 1);        // this sample's value
-		}
-		fprintf(out, "\n");
-	}
+// 			if (i == 0) fprintf(out, "%s", line); // row key, from file 0 only
+// 			fprintf(out, "\t%s", tab + 1);        // this sample's value
+// 		}
+// 		fprintf(out, "\n");
+// 	}
 
-	for (int i = 0; i < n_fns; ++i)
-		if (fps[i]) fclose(fps[i]);
-	free(fps);
+// 	for (int i = 0; i < n_fns; ++i)
+// 		if (fps[i]) fclose(fps[i]);
+// 	free(fps);
 
-	if (out && out != stdout)
-		fclose(out);
-}
+// 	if (out && out != stdout)
+// 		fclose(out);
+// }

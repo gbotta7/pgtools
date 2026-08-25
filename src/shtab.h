@@ -44,18 +44,18 @@
 #define s_val_pack(cnt2, cnt1) (((cnt2) << S_COUNTER_BITS/2) | (cnt1))
 
 // define the second pass SNP-mer info hash table value
-#define I_POS_BITS 31
+#define I_POS_BITS 30
 #define I_POS_MAX ((1U << I_POS_BITS) - 1)
 
-#define i_val_pos(v) (((v) >> 1) & 0x7FFFFFFFU)
-#define i_val_strand(v) ((v) & 0x1U)
+#define i_val_pos(v) (((v) >> 2) & I_POS_MAX)
+#define i_val_allele(v) ((v) & 0x3U)
 
-#define i_postrand_pack(pos, strand) (((pos) << 1) | (strand))
+#define i_posallele_pack(pos, allele) (((pos) << 2) | (allele))
 
 typedef struct {
     uint32_t pos;
     uint16_t idx;       // index of the contig
-    uint8_t strand;
+    uint8_t allele;
 } seq_info_t;
 
 typedef struct __attribute__((packed)) {
@@ -79,7 +79,7 @@ typedef struct { // terminal options
 } pg_opt_t;
 
 typedef struct {
-    uint32_t postrand; // 1 bit for strand, and 31 for pos
+    uint32_t posallele; // 2 bit for allele, and 30 for pos
     uint16_t seq_idx;
 } si_entry_t;
 
@@ -124,7 +124,6 @@ typedef struct {
 
 
 pg_msht_t *pg_msht_init(int k, int pre, int w);
-pg_msht_t *pg_msht_copy(const pg_msht_t *src, int w);
 void pg_msht_destroy(pg_msht_t *h, int w);
 int64_t pg_msht_insert_list(pg_msht_t *h, int n, const seq_t *a, int f);
 void pg_msht_count_list(pg_msht_t *h, int n, const seq_t *a, seq_info_t *b);
@@ -136,10 +135,10 @@ pg_msht_t *pg_msht_repopulate(const char *kmer_file, pg_opt_t *opt);
 void pg_msht_rearrange(pg_msht_t *h, long i);
 
 pg_msht_t *pg_detect(const char **fa_fns, const char **bed_fns, const int n_fns, const pg_opt_t *opt, const char *out_fn);
-void pg_count(const char **fa_fns, const char **bed_fns, const int n_fns, int64_t n_snps, const pg_opt_t *opt, pg_msht_t *h, const char *out_fn);
+void pg_count(const char *fa_fn, const char *bed_fn, const pg_opt_t *opt, pg_msht_t *h, const char *out_fn);
 
 void pg_dump_snpmers(const char *fn, pg_msht_t *h);
-void write_snpmer_tsv(const char *out_fn, pg_msht_t *h, const char *gnm_fn, int w);
-void merge_tsvs(const char *out_fn, const char *tmpdir, const char **fa_fns, int n_fns, int n_rows);
+void write_snpmer_tsv(const char *out_fn, pg_msht_t *h, const char *gnm_fn, int w, int w_mko);
+// void merge_tsvs(const char *out_fn, const char *tmpdir, const char **fa_fns, int n_fns, int n_rows);
 
 #endif // HTAB_H

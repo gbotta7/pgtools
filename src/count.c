@@ -23,17 +23,6 @@ typedef struct {
 } buf_t;
 
 typedef struct {
-	pthread_mutex_t mutex;
-	const char *tmpdir;
-	const char **fa_fns;
-	const char **bed_fns;
-	int n_done;				// processed genomes
-	int n_fns;
-	int n_kmers;
-} filedat_t;
-
-typedef struct {
-	filedat_t *f;
     const pg_opt_t *opt;
     kseq_t *ks; 			// file-specific sequence reader
 	bedmap1_t *b;
@@ -43,7 +32,8 @@ typedef struct {
 	int filt;				// whether the intermediate k-mer filtering has been done for the first time, do not insert new k-mers after it is set to 1
 	int cnt;				// whether it is first or second pass
 	int snp;				// whether you count SNP-mers or k-mers
-	int f_threads;
+	int n_done;				// processed genomes
+	int n_fns;
 } pldat_t;
 
 typedef struct { 			// data structure for each step in kt_pipeline()
@@ -70,7 +60,7 @@ static inline int get_name_idx(cnames_t *nt, const char *name) {
 }
 
 
-static inline void insert_buf(buf_t *buf, pldat_t *p, uint64_t flanks, uint64_t center, uint32_t pos, int cname_idx, uint8_t strand) // insert a k-mer $y to a linear buffer
+static inline void insert_buf(buf_t *buf, pldat_t *p, uint64_t flanks, uint64_t center, uint32_t pos, int cname_idx) // insert a k-mer $y to a linear buffer
 {	
 	int pre = flanks & ((1<<p->opt->pre) - 1);
 	buf_t *b = &buf[pre];
@@ -84,7 +74,7 @@ static inline void insert_buf(buf_t *buf, pldat_t *p, uint64_t flanks, uint64_t 
 		b->a[b->n].h_flanks = flanks;
 		b->a[b->n].cb = center;
 		b->i[b->n].pos = pos;
-		b->i[b->n].strand = strand;
+		b->i[b->n].allele = center;
 		b->i[b->n].idx = cname_idx;
 	} else {
 		if (b->n == b->m) {
@@ -116,11 +106,10 @@ static void count_seq_buf(buf_t *buf, pldat_t *p, int len, const char *seq, int 
 								| ((y >> ((p->opt->k/2+1)*2)) << ((p->opt->k/2)*2)); 		// left flank from raw y
 				uint64_t rev_flanks = (y_rev & ((1ULL<<(p->opt->k/2)*2)-1))          		// right flank from raw y
 								| ((y_rev >> ((p->opt->k/2+1)*2)) << ((p->opt->k/2)*2)); 	// left flank from raw y
-				uint8_t strand = x[0] < x[1] ? 1 : 0;
 
 				if (flanks == rev_flanks) continue;											// palindromic
 			
-				insert_buf(buf, p, pg_hash64(flanks, hash_mask), center, (uint32_t)i-p->opt->k/2, cname_idx, strand); // i-k/2 is the 0-based position of center
+				insert_buf(buf, p, pg_hash64(flanks, hash_mask), center, (uint32_t)i-p->opt->k/2, cname_idx); // i-k/2 is the 0-based position of center
 			}
 		} else l = 0, x[0] = x[1] = 0; // if there is an "N", restart
 	}
@@ -153,8 +142,8 @@ static void clear_for(void *data, long i, int tid) // callback for kt_for()
 static void filter_for(void *data, long i, int tid) // callback for kt_for()
 {
 	pldat_t *p = (pldat_t*)data;
-	int ff = p->f->n_done == p->f->n_fns; 
-	int64_t n_del = pg_msht_filter(p->h, i, p->f->n_done, p->f->n_fns, ff, p->opt);
+	int ff = p->n_done == p->n_fns; 
+	int64_t n_del = pg_msht_filter(p->h, i, p->n_done, p->n_fns, ff, p->opt);
 
 	pthread_mutex_lock(&p->h->mutex);
 	p->h->n_del_tot += n_del;
@@ -240,16 +229,13 @@ static void *worker_pipeline(void *data, int step, void *in) // callback for kt_
 		stepdat_t *s = (stepdat_t*)in;
 		int i, n = 1<<p->opt->pre;
 		int n_ins = 0;
-		int f_threads = p->cnt ? p->f_threads : p->opt->n_threads-2;
-		kt_for(f_threads, worker_for, s, n);
+		kt_for(p->opt->n_threads-2, worker_for, s, n);
 		for (i = 0; i < n; ++i) {
 			n_ins += s->buf[i].n_ins;
+			free(s->buf[i].a);
 			if (p->cnt && p->opt->write_info) {
-				free(s->buf[i].a);
 				free(s->buf[i].i);
-			}
-			else
-				free(s->buf[i].a);
+			}				
 		}
 		p->h->n_ins_tot += n_ins;
 
@@ -260,15 +246,9 @@ static void *worker_pipeline(void *data, int step, void *in) // callback for kt_
 
 pg_msht_t *pg_detect(const char **fa_fns, const char **bed_fns, const int n_fns, const pg_opt_t *opt, const char *out_fn)
 {	
-	filedat_t fd;
-	fd.fa_fns = fa_fns;
-	fd.bed_fns = bed_fns;
-	fd.n_fns = n_fns;
-	fd.n_done = 0;
-	pthread_mutex_init(&fd.mutex, 0);
-
 	pldat_t pl;
-	pl.f = &fd;
+	pl.n_fns = n_fns;
+	pl.n_done = 0;
 	pl.h = pg_msht_init(opt->k, opt->pre, opt->write_info);
 	pl.opt = opt;
 	pl.filt = 0;
@@ -312,10 +292,10 @@ pg_msht_t *pg_detect(const char **fa_fns, const char **bed_fns, const int n_fns,
 		kt_for(pl.opt->n_threads, clear_for, &pl, 1 << pl.opt->pre);
 
 		// update number of processed files and filter k-mers if needed
-		pl.f->n_done++;
+		pl.n_done++;
 
-		int check_fr = (int)round(pl.f->n_fns * (1.0 - opt->msf)) + 1;
-		if (!(pl.f->n_done % check_fr) && pl.f->n_done < n_fns) {
+		int check_fr = (int)round(pl.n_fns * (1.0 - opt->msf)) + 1;
+		if (!(pl.n_done % check_fr) && pl.n_done < n_fns) {
 			if (opt->verbose) {
 				fprintf(stderr, "[M::%s] Filtering k-mers\n", __func__);
 			}
@@ -327,7 +307,7 @@ pg_msht_t *pg_detect(const char **fa_fns, const char **bed_fns, const int n_fns,
 		}
 
 		if (opt->verbose) {
-			fprintf(stderr, "[M::%s] Processed %d genomes\n", __func__, pl.f->n_done);
+			fprintf(stderr, "[M::%s] Processed %d genomes\n", __func__, pl.n_done);
 		}
 	}
 
@@ -357,122 +337,48 @@ static void rearrange_for(void *data, long i, int tid) // callback for kt_for()
 	pg_msht_rearrange(h, i);
 }
 
-
-static void *worker_file(void *data)
+void pg_count(const char *fa_fn, const char *bed_fn, const pg_opt_t *opt, pg_msht_t *h, const char *out_fn)
 {
-    pldat_t *pl = (pldat_t*)data;
-	filedat_t *fd = pl->f; // alias for convenience (not to use pl->f every time)
+	pldat_t pl;
+	pl.n_done = 0;
+	pl.h = h;
+	pl.opt = opt;
+	pl.filt = 0;
+	pl.cnt = 1;
+	pl.snp = opt->snp;
 
-	while (1) { // cannot use n_fns because different threads are concurrently updating the number of processed genomes
-		pthread_mutex_lock(&fd->mutex);
-		int i = fd->n_done++;
-		if (i >= fd->n_fns) {
-			pthread_mutex_unlock(&fd->mutex);
-			break;
-		}
-		if (pl->opt->verbose) {
-			fprintf(stderr, "[M::%s] Counting SNP-mers in genome number %d\n", __func__, fd->n_done);
-		}
-        pthread_mutex_unlock(&fd->mutex);
-		
-		// open fasta file
-        pl->fa_fn = fd->fa_fns[i];
-        gzFile fp = gzopen(pl->fa_fn, "r");
-        if (fp == 0) {
-            fprintf(stderr, "[E::%s] failed to open '%s'\n", __func__, pl->fa_fn);
-            continue;
-        }
-        pl->ks = kseq_init(fp);
+	if (!bed_fn && opt->verbose)
+		fprintf(stderr, "[M::%s] Processing '%s'\n", __func__, fa_fn);
+	if (bed_fn && opt->verbose)
+		fprintf(stderr, "[M::%s] Processing '%s' in the regions specified by %s\n", __func__, fa_fn, bed_fn);
 
-		// open bed file if passed
-		pl->bed_fn = fd->bed_fns ? fd->bed_fns[i] : 0;
-		pl->b = 0;
-		if (pl->bed_fn) {
-			pl->b = bed_read(pl->bed_fn);
-		}
+	// open fasta file
+	gzFile fp;
+	fp = fa_fn == 0 || strcmp(fa_fn, "-") == 0? gzdopen(0, "r") : gzopen(fa_fn, "r");
+	if (fp == 0) return 0;
+	pl.ks = kseq_init(fp);
+	pl.fa_fn = fa_fn;
 
-        kt_pipeline(3, worker_pipeline, pl, 3);
-        kseq_destroy(pl->ks);
-        gzclose(fp);
+	// open bed file if passed
+	pl.bed_fn = bed_fn;
+	pl.b = 0;
+	if (pl.bed_fn) {
+		pl.b = bed_read(pl.bed_fn);
+	}
 
-		if (pl->b) {
-			bed_destroy(pl->b);
-			pl->b = 0;
-		}
+	kt_pipeline(3, worker_pipeline, &pl, 3);
 
-		// store this genome's counts to its own file (no mutex: own file)
-		char gnm_path[4096];
-		snprintf(gnm_path, sizeof gnm_path, "%s/gnm.%d.tsv", fd->tmpdir, i);
+	kseq_destroy(pl.ks);
+	gzclose(fp);
 
-		if (pl->snp)
-			write_snpmer_tsv(gnm_path, pl->h, pl->fa_fn, pl->opt->write_info);
+	if (pl.b) {
+		bed_destroy(pl.b); pl.b = 0;
+	}
 
-		kt_for(pl->f_threads, clear_for, pl, 1 << pl->opt->pre); // clear msht in this thread
-    }
+	if (out_fn) {
+		if (pl.snp)
+			write_snpmer_tsv(out_fn, pl.h, pl.fa_fn, pl.opt->write_info, pl.opt->write_mko);
+	}
 	
-    pthread_exit(0);
-}
-
-
-void pg_count(const char **fa_fns, const char **bed_fns, const int n_fns, int64_t n_kmers, const pg_opt_t *opt, pg_msht_t *h, const char *out_fn)
-{	
-	// shift bits of the hash table values to count SNP-mers
-	kt_for(opt->n_threads, rearrange_for, h, 1 << opt->pre);
-
-	filedat_t fd;
-	fd.fa_fns = fa_fns;
-	fd.bed_fns = bed_fns;
-	fd.n_kmers = n_kmers;
-	fd.n_fns = n_fns;
-	fd.n_done = 0;
-	pthread_mutex_init(&fd.mutex, 0);
-	
-	// create a temp directory for the per-genome count files
-	char tmpdir[1024];
-	snprintf(tmpdir, sizeof tmpdir, "%s.ktmp.XXXXXX", strcmp(out_fn, "-") ? out_fn : "pg");
-	if (mkdtemp(tmpdir) == 0) {
-		fprintf(stderr, "[E::%s] failed to create temp dir\n", __func__);
-		return;
-	}
-	fd.tmpdir = tmpdir;
-	
-	// count k-mers in each genome in parallel
-	int *batch_threads = (int*)calloc(n_fns, sizeof(int));
-	int n_batch = assign_threads(opt->n_threads, n_fns, batch_threads);
-
-	pthread_t *tid = (pthread_t*)calloc(n_batch, sizeof(pthread_t));
-	pldat_t *pl  = (pldat_t*)calloc(n_batch, sizeof(pldat_t));
-	for (int i = 0; i < n_batch; ++i) {
-		pl[i].f = &fd;
-		pl[i].f_threads = batch_threads[i];
-		pl[i].h = pg_msht_copy(h, opt->write_info);
-		pl[i].opt = opt;
-		pl[i].cnt = 1; // second pass
-		pl[i].snp = opt->snp;
-		pthread_create(&tid[i], 0, worker_file, &pl[i]);
-	}
-	for (int i = 0; i < n_batch; ++i) {
-		pthread_join(tid[i], 0);
-		pg_msht_destroy(pl[i].h, pl[i].opt->write_info);
-	}
-
-    free(tid); free(pl); free(batch_threads);
-
-	pthread_mutex_destroy(&fd.mutex);
-
-	// merge the per-genome files (opened in FD-safe batches) into the matrix
-	if (opt->verbose)
-		fprintf(stderr, "[M::%s] Merging %d per-genome files into '%s'\n", __func__, n_fns, out_fn);
-
-	merge_tsvs(out_fn, tmpdir, fd.fa_fns, fd.n_fns, fd.n_kmers);
-
-	// clean up per-genome TSVs
-	for (int i = 0; i < n_fns; ++i) {
-		char p[4096];
-		snprintf(p, sizeof p, "%s/gnm.%d.tsv", tmpdir, i);
-		remove(p);
-	}
-	remove(tmpdir);
-
-	// pg_msht_destroy(h, opt);
+	pg_msht_destroy(pl.h, opt->write_info);
 }

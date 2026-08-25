@@ -7,7 +7,7 @@
 #include <string.h>
 #include "shtab.h"
 
-#define PG_VERSION "0.1.0" 
+#define PGKMC_VERSION "0.1.0" 
 
 #define CALLOC(ptr, len) ((ptr) = (__typeof__(ptr))calloc((len), sizeof(*(ptr))))
 #define MALLOC(ptr, len) ((ptr) = (__typeof__(ptr))malloc((len) * sizeof(*(ptr))))

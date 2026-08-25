@@ -62,33 +62,19 @@ int pg_mkht_insert_list(pg_mkht_t *h, int n, const uint64_t *a)
 	return n_ins;
 }
 
-
-int pg_mkht_get(const pg_mkht_t *h, uint64_t x)
-{
-	int mask = (1<<h->pre) - 1;
-	const pg_kht_t *g = h->h[x & mask].h;
-	khint_t k;
-	k = pg_kht_get(g, x >> h->pre << K_COUNTER_BITS);
-	return k == kh_end(g)? -1 : kh_key(g, k) & K_COUNTER_MAX;
-}
-
-void yak_ch_tighten(yak_ch_t *h)
+void pg_mkht_tighten(pg_mkht_t *h)
 {
 	int i;
 	for (i = 0; i < 1<<h->pre; ++i) {
-		yak_ht_t *g = h->h[i].h;
+		pg_kht_t *g = h->h[i].h;
 		if (kh_size(g) * 3 < kh_capacity(g))
-			yak_ht_resize(g, kh_size(g) * 3);
+			pg_kht_resize(g, kh_size(g) * 3);
 	}
 }
 
-
-
-
-
 pg_mkht_t *pg_mkht_repopulate(const char *kmer_file, pg_opt_t *opt)
 {	
-	pg_mkht_t *h = pg_msht_init(opt->k, opt->pre, opt->write_info);
+	pg_mkht_t *h = pg_mkht_init(opt->k, opt->pre, opt->write_info);
 	FILE *fp;
 	char *line = NULL;
 	size_t line_cap = 0;

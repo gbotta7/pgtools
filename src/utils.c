@@ -42,7 +42,7 @@ void pg_opt_init(pg_opt_t *o)
 	o->n_threads = 3;
 	o->chunk_size = mm_parse_num("1.9g");
     o->write_info = 0;
-    o->write_mko = 10;
+    o->write_mko = S_COUNTER_MAX;
 	o->verbose = 0;
 }
 
