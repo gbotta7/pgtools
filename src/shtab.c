@@ -699,6 +699,8 @@ void write_snpmer_tsv(const char *out_fn, pg_msht_t *h, const char *gnm_fn, int 
 
 			if (w) {
 				int occ = vi->n < w_mko ? vi->n : w_mko;
+
+				fputc('\t', fp);
 				for (int j = 0; j < occ; ++j) {
 					uint32_t posallele = vi->i[j].posallele;
 					uint32_t pos = i_val_pos(posallele);
@@ -706,7 +708,8 @@ void write_snpmer_tsv(const char *out_fn, pg_msht_t *h, const char *gnm_fn, int 
 					int32_t idx = vi->i[j].seq_idx;
 					const char *cname = h->cnames.names[idx];
 
-					fprintf(fp, "%c%s:%c:%u", j == 0 ? '\t' : ',', cname, nt4_seq_table[allele], pos);
+					if (j) fputc(',', fp);
+					fprintf(fp, "%s:%c:%u", cname, nt4_seq_table[allele], pos);
 				}
 			}
 			fprintf(fp, "\n");
