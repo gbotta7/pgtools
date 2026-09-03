@@ -1,5 +1,5 @@
-#ifndef HTAB_H
-#define HTAB_H
+#ifndef SHTAB_H
+#define SHTAB_H
 
 #include <pthread.h>
 #include <stdint.h>
@@ -59,7 +59,7 @@ typedef struct {
 } seq_info_t;
 
 typedef struct __attribute__((packed)) {
-	uint64_t h_flanks;
+	uint64_t h_seq;
 	uint8_t cb; // stores central base of k-mer and SNP information
 } seq_t;
 
@@ -81,10 +81,10 @@ typedef struct { // terminal options
 typedef struct {
     uint32_t posallele; // 2 bit for allele, and 30 for pos
     uint16_t seq_idx;
-} si_entry_t;
+} sci_entry_t;
 
 typedef struct {
-    si_entry_t *i;
+    sci_entry_t *i;
     int n, m;
     uint32_t cnt;
 } sci_t; // snp-mer count and info
@@ -115,7 +115,7 @@ typedef struct {
     pthread_mutex_t mutex;
     cnames_t cnames;        // contig names
     pg_sht1_t *h;           // array of partitions (size = 1 << pre)
-    pg_siht1_t *ih;          // pg_sht1_t with info
+    pg_siht1_t *ih;         // pg_sht1_t with info
     int64_t n_ins_tot;      // stores the total SNP-mer insertions in pangenome
     int64_t n_del_tot;      // stores the total filtered SNP-mers in the filter stage
     int32_t k;              // SNP-mers length
@@ -141,4 +141,4 @@ void pg_dump_snpmers(const char *fn, pg_msht_t *h);
 void write_snpmer_tsv(const char *out_fn, pg_msht_t *h, const char *gnm_fn, int w, int w_mko);
 // void merge_tsvs(const char *out_fn, const char *tmpdir, const char **fa_fns, int n_fns, int n_rows);
 
-#endif // HTAB_H
+#endif // SHTAB_H

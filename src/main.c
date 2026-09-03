@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "khtab.h"
 #include "shtab.h"
 #include "ketopt.h"
 #include "sys.h"
@@ -202,21 +203,30 @@ int main_count(int argc, char *argv[])
 		fprintf(stderr, "[E::%s] -k/--k_length must be odd and <=31\n", __func__);
 		return 1;
 	}
-	if (!kmer_file) {
+	if (!kmer_file && opt.snp) {
 		fprintf(stderr, "[E::%s] --kmers is required in pgkmc count (see pgkmc detect)\n", __func__);
 		return 1;
 	}
+	if (!opt.snp) {
+		fprintf(stderr, "[W::%s] --snp not activated: parameter -f/filt_type has no effect in this mode\n", __func__);
+	}
 
 	// start
-	// first step: load specific k-mers
-	fprintf(stderr, "[M::%s] repopulating hash table from file '%s'\n", __func__, kmer_file);
-	h = pg_msht_repopulate(kmer_file, &opt);
+	if (opt.snp) {
+		// first step: load specific SNP-mers
+		fprintf(stderr, "[M::%s] repopulating hash table from file '%s'\n", __func__, kmer_file);
+		h = pg_msht_repopulate(kmer_file, &opt);
 
-	// second step: count k-mers in each file
-	if (fn_out == NULL) fn_out = "-"; // redirect output to stdout
-	pg_count(argv[o.ind], bed_fn, &opt, h, fn_out);
-
-	fprintf(stderr, "[M::%s] Counted required k-mers in %s\n", __func__, argv[o.ind]);
+		// second step: count specific SNP-mers
+		if (fn_out == NULL) fn_out = "-"; // redirect output to stdout
+		pg_count(argv[o.ind], bed_fn, &opt, h, fn_out);
+		fprintf(stderr, "[M::%s] Counted required SNP-mers in %s\n", __func__, argv[o.ind]);
+	} else {
+		// second step: count specific k-mers
+		if (fn_out == NULL) fn_out = "-"; // redirect output to stdout
+		pg_count(argv[o.ind], bed_fn, &opt, 0, fn_out);
+		fprintf(stderr, "[M::%s] Counted required k-mers in %s\n", __func__, argv[o.ind]);
+	}
 	
     return 0;
 }

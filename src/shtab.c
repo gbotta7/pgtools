@@ -6,6 +6,7 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "khtab.h"
 #include "shtab.h"
 #include "khashl.h" // hash table
 #include "kseq.h"
@@ -108,7 +109,7 @@ int64_t pg_msht_insert_list(pg_msht_t *h, int n, const seq_t *a, int f)
 	uint64_t mask = (1<<h->pre) - 1;
 	int64_t n_ins = 0;
 	if (n == 0) return 0;
-	pg_sht1_t *g = &h->h[a[0].h_flanks & mask]; // get hash table partition for the first (and all) SNP-mers
+	pg_sht1_t *g = &h->h[a[0].h_seq & mask]; // get hash table partition for the first (and all) SNP-mers
 
 	uint32_t gnm_cnt1, gnm_cnt2, pgnm_cnt1, pgnm_cnt2, v;
 	uint64_t filter, cb1, cb2, snp1, snp2, kv;
@@ -116,8 +117,8 @@ int64_t pg_msht_insert_list(pg_msht_t *h, int n, const seq_t *a, int f)
 	for (j = 0; j < n; ++j) {
 		int absent;
 		uint32_t cb = a[j].cb;
-		uint64_t key = (a[j].h_flanks >> h->pre);
-		if ((a[j].h_flanks & mask) != (a[0].h_flanks & mask)) continue; // skip if the partition bits are different (should not happen)
+		uint64_t key = (a[j].h_seq >> h->pre);
+		if ((a[j].h_seq & mask) != (a[0].h_seq & mask)) continue; // skip if the partition bits are different (should not happen)
 		
 		khint_t k;
 		if (!f) {
@@ -337,16 +338,16 @@ void pg_msht_count_list(pg_msht_t *h, int n, const seq_t *a, seq_info_t *b)
 
 	// get hash table partition for the first (and all) SNP-mers.
 	if (b) {
-		ig = &h->ih[a[0].h_flanks & mask];
+		ig = &h->ih[a[0].h_seq & mask];
 	} else {
-		g = &h->h[a[0].h_flanks & mask];
+		g = &h->h[a[0].h_seq & mask];
 	}
 	
 	for (j = 0; j < n; ++j) {
 		uint64_t cb = a[j].cb;
 		uint64_t key;
-		if ((a[j].h_flanks & mask) != (a[0].h_flanks & mask)) continue; // skip if the partition bits are different (should not happen)
-		key = (a[j].h_flanks >> h->pre);
+		if ((a[j].h_seq & mask) != (a[0].h_seq & mask)) continue; // skip if the partition bits are different (should not happen)
+		key = (a[j].h_seq >> h->pre);
 		
 		if (b) { // with info
 			khint_t k = pg_siht_get(ig->ih, key << F_VAL_INFO_BITS);
@@ -705,7 +706,7 @@ void write_snpmer_tsv(const char *out_fn, pg_msht_t *h, const char *gnm_fn, int 
 					uint32_t posallele = vi->i[j].posallele;
 					uint32_t pos = i_val_pos(posallele);
 					uint32_t allele = i_val_allele(posallele);
-					int32_t idx = vi->i[j].seq_idx;
+					uint16_t idx = vi->i[j].seq_idx;
 					const char *cname = h->cnames.names[idx];
 
 					if (j) fputc(',', fp);

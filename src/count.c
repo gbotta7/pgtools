@@ -9,6 +9,7 @@
 #include "bed.h"
 #include "kseq.h"
 #include "kthread.h"
+#include "khtab.h"
 #include "shtab.h"
 #include "parser.h"
 #include "utils.h"
@@ -28,7 +29,8 @@ typedef struct {
 	bedmap1_t *b;
 	const char *fa_fn;
 	const char *bed_fn;
-    pg_msht_t *h;
+    pg_msht_t *sh;
+	pg_mkht_t *kh;
 	int filt;				// whether the intermediate k-mer filtering has been done for the first time, do not insert new k-mers after it is set to 1
 	int cnt;				// whether it is first or second pass
 	int snp;				// whether you count SNP-mers or k-mers
@@ -71,7 +73,7 @@ static inline void insert_buf(buf_t *buf, pldat_t *p, uint64_t flanks, uint64_t 
 			REALLOC(b->a, b->m);
 			REALLOC(b->i, b->m);
 		}
-		b->a[b->n].h_flanks = flanks;
+		b->a[b->n].h_seq = flanks;
 		b->a[b->n].cb = center;
 		b->i[b->n].pos = pos;
 		b->i[b->n].allele = center;
@@ -81,7 +83,7 @@ static inline void insert_buf(buf_t *buf, pldat_t *p, uint64_t flanks, uint64_t 
 			b->m = b->m < 8? 8 : b->m + (b->m>>1);
 			REALLOC(b->a, b->m);
 		}
-		b->a[b->n].h_flanks = flanks;
+		b->a[b->n].h_seq = flanks;
 		b->a[b->n].cb = center;
 	}
 	b->n++;
@@ -101,15 +103,22 @@ static void count_seq_buf(buf_t *buf, pldat_t *p, int len, const char *seq, int 
 			if (++l >= p->opt->k) { // we find a k-mer
 				uint64_t y = x[0] < x[1] ? x[0] : x[1];
 				uint64_t y_rev = x[0] < x[1] ? x[1] : x[0];
-				uint64_t center = (y >> ((p->opt->k/2)*2)) & 3;           					// extract center from raw y (already contains the right allele)
-				uint64_t flanks = (y & ((1ULL<<(p->opt->k/2)*2)-1))          				// right flank from raw y
-								| ((y >> ((p->opt->k/2+1)*2)) << ((p->opt->k/2)*2)); 		// left flank from raw y
-				uint64_t rev_flanks = (y_rev & ((1ULL<<(p->opt->k/2)*2)-1))          		// right flank from raw y
-								| ((y_rev >> ((p->opt->k/2+1)*2)) << ((p->opt->k/2)*2)); 	// left flank from raw y
-
-				if (flanks == rev_flanks) continue;											// palindromic
-			
-				insert_buf(buf, p, pg_hash64(flanks, hash_mask), center, (uint32_t)i-p->opt->k/2, cname_idx); // i-k/2 is the 0-based position of center
+				uint64_t center, flanks, rev_flanks;
+				if (p->snp) {
+					center = (y >> ((p->opt->k/2)*2)) & 3;           					// extract center from raw y (already contains the right allele)
+					flanks = (y & ((1ULL<<(p->opt->k/2)*2)-1))          				// right flank from raw y
+							| ((y >> ((p->opt->k/2+1)*2)) << ((p->opt->k/2)*2)); 		// left flank from raw y
+					rev_flanks = (y_rev & ((1ULL<<(p->opt->k/2)*2)-1))          		// right flank from raw y
+							| ((y_rev >> ((p->opt->k/2+1)*2)) << ((p->opt->k/2)*2)); 	// left flank from raw y
+					
+					if (flanks == rev_flanks) continue;											// palindromic
+				}
+				
+				if (p->snp) {
+					insert_buf(buf, p, pg_hash64(flanks, hash_mask), center, (uint32_t)i-p->opt->k/2, cname_idx); // i-k/2 is the 0-based position of center
+				} else {
+					insert_buf(buf, p, pg_hash64(y, mask), 0, (uint32_t)i-p->opt->k/2, cname_idx); // i-k/2 is the 0-based position of center
+				}
 			}
 		} else l = 0, x[0] = x[1] = 0; // if there is an "N", restart
 	}
@@ -120,35 +129,40 @@ static void worker_for(void *data, long i, int tid) // callback for kt_for()
 {
 	stepdat_t *s = (stepdat_t*)data;
 	buf_t *b = &s->buf[i];
-	pg_msht_t *h = s->p->h;
 
-	if (s->p->cnt && s->p->opt->write_info)
-		pg_msht_count_list(h, b->n, b->a, b->i);
-	else if (s->p->cnt && !s->p->opt->write_info)
-		pg_msht_count_list(h, b->n, b->a, 0);
-	else
-		b->n_ins += pg_msht_insert_list(h, b->n, b->a, s->p->filt);
+	if (s->p->snp) {
+		pg_msht_t *h = s->p->sh;
+		if (s->p->cnt && s->p->opt->write_info)
+			pg_msht_count_list(h, b->n, b->a, b->i);
+		else if (s->p->cnt && !s->p->opt->write_info)
+			pg_msht_count_list(h, b->n, b->a, 0);
+		else
+			b->n_ins += pg_msht_insert_list(h, b->n, b->a, s->p->filt);
+	} else {
+		pg_mkht_t *h = s->p->kh;
+		b->n_ins += pg_mkht_insert_list(h, b->n, b->a, b->i, s->p->opt->write_info);
+	}
 }
 
 static void clear_for(void *data, long i, int tid) // callback for kt_for()
 {
 	pldat_t *p = (pldat_t*)data;
 	if (p->cnt)
-		pg_msht_clear2(p->h, i, p->opt->write_info);
+		pg_msht_clear2(p->sh, i, p->opt->write_info);
 	else
-		pg_msht_clear1(p->h, i, p->opt->filt_type, p->opt->mko);
+		pg_msht_clear1(p->sh, i, p->opt->filt_type, p->opt->mko);
 }
 
 static void filter_for(void *data, long i, int tid) // callback for kt_for()
 {
 	pldat_t *p = (pldat_t*)data;
 	int ff = p->n_done == p->n_fns; 
-	int64_t n_del = pg_msht_filter(p->h, i, p->n_done, p->n_fns, ff, p->opt);
+	int64_t n_del = pg_msht_filter(p->sh, i, p->n_done, p->n_fns, ff, p->opt);
 
-	pthread_mutex_lock(&p->h->mutex);
-	p->h->n_del_tot += n_del;
-	p->h->n_ins_tot -= n_del;
-	pthread_mutex_unlock(&p->h->mutex);
+	pthread_mutex_lock(&p->sh->mutex);
+	p->sh->n_del_tot += n_del;
+	p->sh->n_ins_tot -= n_del;
+	pthread_mutex_unlock(&p->sh->mutex);
 
 	p->filt = 1;
 }
@@ -196,7 +210,11 @@ static void *worker_pipeline(void *data, int step, void *in) // callback for kt_
 			// mask the sequence outside the BED entries if a BED file is provided
 			if (c) mask_fa(s->seq[s->n], l, c);
 
-			s->name_idx[s->n] = p->cnt ? get_name_idx(&p->h->cnames, p->ks->name.s) : -1;
+			if (p->snp) {
+				s->name_idx[s->n] = p->cnt ? get_name_idx(&p->sh->cnames, p->ks->name.s) : -1;
+			} else {
+				s->name_idx[s->n] = get_name_idx(&p->kh->cnames, p->ks->name.s);
+			}
 			s->len[s->n++] = l;
 			s->sum_len += l;
 			s->nk += nk_ctg;
@@ -218,7 +236,7 @@ static void *worker_pipeline(void *data, int step, void *in) // callback for kt_
 			}
 		}
 		for (i = 0; i < s->n; ++i) {
-			count_seq_buf(s->buf, p, s->len[i], s->seq[i], s->name_idx[i]); // CHANGED CONDITION
+			count_seq_buf(s->buf, p, s->len[i], s->seq[i], s->name_idx[i]);
 			free(s->seq[i]);
 		}
 		free(s->seq); free(s->len); free(s->name_idx);
@@ -235,7 +253,11 @@ static void *worker_pipeline(void *data, int step, void *in) // callback for kt_
 				free(s->buf[i].i);
 			}				
 		}
-		p->h->n_ins_tot += n_ins;
+		if (p->snp) {
+			p->sh->n_ins_tot += n_ins;
+		} else {
+			p->kh->n_ins_tot += n_ins;
+		}
 
 		free(s->buf); free(s);
 	}
@@ -247,12 +269,12 @@ pg_msht_t *pg_detect(const char **fa_fns, const char **bed_fns, const int n_fns,
 	pldat_t pl;
 	pl.n_fns = n_fns;
 	pl.n_done = 0;
-	pl.h = pg_msht_init(opt->k, opt->pre, opt->write_info);
+	pl.sh = pg_msht_init(opt->k, opt->pre, opt->write_info);
 	pl.opt = opt;
 	pl.filt = 0;
 	pl.cnt = 0; // first pass
 	pl.snp = opt->snp;
-	pl.h->n_del_tot = 0;
+	pl.sh->n_del_tot = 0;
 	const char *fa_fn;
 	const char *bed_fn;
 	for (int i = 0; i < n_fns; ++i) {
@@ -298,9 +320,9 @@ pg_msht_t *pg_detect(const char **fa_fns, const char **bed_fns, const int n_fns,
 				fprintf(stderr, "[M::%s] Filtering k-mers\n", __func__);
 			}
 			kt_for(pl.opt->n_threads, filter_for, &pl, 1 << pl.opt->pre);
-			pg_msht_tighten(pl.h);
+			pg_msht_tighten(pl.sh);
 			if (opt->verbose) {
-				fprintf(stderr, "[M::%s] Current number of SNP-mer entries in the hash table: %ld\n", __func__, pl.h->n_ins_tot);
+				fprintf(stderr, "[M::%s] Current number of SNP-mer entries in the hash table: %ld\n", __func__, pl.sh->n_ins_tot);
 			}
 		}
 
@@ -312,20 +334,20 @@ pg_msht_t *pg_detect(const char **fa_fns, const char **bed_fns, const int n_fns,
 	if (n_fns > 1) {
 		fprintf(stderr, "[M::%s] Final filtering to get specific k-mers\n", __func__);
 		kt_for(pl.opt->n_threads, filter_for, &pl, 1 << pl.opt->pre); // final filter
-		pg_msht_tighten(pl.h);
+		pg_msht_tighten(pl.sh);
 		if (opt->verbose) {
-			fprintf(stderr, "[M::%s] Current number of SNP-mer entries in the hash table: %ld\n", __func__, pl.h->n_ins_tot);
+			fprintf(stderr, "[M::%s] Current number of SNP-mer entries in the hash table: %ld\n", __func__, pl.sh->n_ins_tot);
 		}
 	}
 
-	pg_msht_tighten(pl.h);
+	pg_msht_tighten(pl.sh);
 
 	if (out_fn) {
 		if (pl.snp)
-			pg_dump_snpmers(out_fn, pl.h);
+			pg_dump_snpmers(out_fn, pl.sh);
 	}
 	
-    return pl.h;
+    return pl.sh;
 }
 
 
@@ -339,7 +361,8 @@ void pg_count(const char *fa_fn, const char *bed_fn, const pg_opt_t *opt, pg_msh
 {
 	pldat_t pl;
 	pl.n_done = 0;
-	pl.h = h;
+	pl.sh = h;
+	pl.kh = !h ? pg_mkht_init(opt->k, opt->pre, opt->write_info) : 0;
 	pl.opt = opt;
 	pl.filt = 0;
 	pl.cnt = 1;
@@ -374,9 +397,16 @@ void pg_count(const char *fa_fn, const char *bed_fn, const pg_opt_t *opt, pg_msh
 	}
 
 	if (out_fn) {
-		if (pl.snp)
-			write_snpmer_tsv(out_fn, pl.h, pl.fa_fn, pl.opt->write_info, pl.opt->write_mko);
+		if (pl.snp) {
+			write_snpmer_tsv(out_fn, pl.sh, pl.fa_fn, pl.opt->write_info, pl.opt->write_mko);
+		} else {
+			write_kmer_tsv(out_fn, pl.kh, pl.fa_fn, pl.opt->write_info, pl.opt->write_mko);
+		}
 	}
 	
-	pg_msht_destroy(pl.h, opt->write_info);
+	if (pl.snp) {
+		pg_msht_destroy(pl.sh, opt->write_info);
+	} else {
+		pg_mkht_destroy(pl.kh, opt->write_info);
+	}
 }

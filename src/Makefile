@@ -2,7 +2,7 @@ CC=			gcc
 CFLAGS=		-g -Wall -O2
 CPPFLAGS=
 INCLUDES=	
-OBJS=		bed.o count.o shtab.o kthread.o parser.o sys.o utils.o
+OBJS=		bed.o count.o khtab.o shtab.o kthread.o parser.o sys.o utils.o
 PROG=		pgkmc
 LIBS=		-lm -lz -lpthread
 
@@ -33,6 +33,7 @@ depend:
 main.o:    main.c    shtab.h utils.h ketopt.h sys.h
 bed.o:     bed.c     bed.h khashl.h utils.h
 count.o:   count.c   bed.h shtab.h utils.h kseq.h kthread.h parser.h
+khtab.o:   khtab.c   khtab.h utils.h
 shtab.o:   shtab.c   shtab.h utils.h khashl.h parser.h kseq.h
 kthread.o: kthread.c kthread.h
 parser.o:  parser.c  parser.h kseq.h utils.h
