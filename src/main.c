@@ -187,8 +187,8 @@ int main_count(int argc, char *argv[])
 		fprintf(stderr, "  %-10s chunk size [%ld]\n",           "-K/--chunk_size INT", (long)opt.chunk_size);
 		fprintf(stderr, "  %-10s write pangenome hits in the info file up to --write_mko occurrences\n", "-w");
 		fprintf(stderr, "  %-10s write up to INT pangenome hits in the info file [%d]\n", "--write_mko INT", opt.write_mko);
-		fprintf(stderr, "  %-10s text file listing one BED path per line, one line per input FASTA, in the same order\n",
-				"-b/--bed_list FILE");
+		fprintf(stderr, "  %-10s BED file with the regions of interest\n",
+				"-b/--bed FILE");
 		fprintf(stderr, "  %-10s verbose output\n",             "-v/--verbose");
 		fprintf(stderr, "  %-10s output genome-specific k-mers or SNP-mers in TSV format\n",
 				"-o/--output FILE");
