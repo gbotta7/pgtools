@@ -1,28 +1,31 @@
 ## User's guide
 
-**pgtools** is a fast, multi-threaded C toolkit for pangenome SNP-mer analysis. Given a set of genome assemblies, it identifies *SNP-mers* — k-mers whose central base varies across genomes — and builds a VCF file recording:
-1. The reference and alternate alleles for each SNP, along with the SNP-mers it originated from.
-2. Per-genome allele counts for each SNP.
-3. AC, AN, and AF fields.
-5. Optionally, all hits of each SNP-mer across all input assemblies (contig|strand|position) in the INFO field.
+**pgkmc** is a fast, multi-threaded C toolkit for pangenome k-mer and SNP-mer analysis. Given a set of genome assemblies, it can count k-mers or identify and count *SNP-mers* — k-mers whose central base varies across genomes. It produces a TSV file with three columns:
+1. k-mer or SNP-mer sequence
+2. Counts
+3. Optionally, the positions of each k-mer or SNP-mer in that sample
 
 Typical use cases can be:
-- **Pangenome SNP calling** — efficiently identify genome-wide SNPs across large collections of bacterial, fungal, or viral assemblies without whole-genome alignment.
+- **Pangenome SNP calling** — efficiently identify genome-wide SNPs across large collections of bacterial, fungal, or viral assemblies without whole-genome alignment and also in repetitive regions.
 - **Population genomics** — characterize allele frequencies and SNP distributions across hundreds to thousands of genomes.
 
 ---
 
 ## How it works
 
-pgtools operates in two stages:
+When counting SNP-mers, pgkmc operates in two stages:
 
-**Stage 1 — k-mer counting and SNP-mer discovery (`pg_count_k`)**
+**Stage 1 — SNP-mer discovery (`pgkmc detect`)**
 
-Each genome is streamed in chunks and its k-mers are extracted and inserted into a partitioned hash table. Every time a number of genomes is processed, low-frequency k-mers are filtered out. Once all genomes are processed, a final filter retains only *SNP-mers* that appear in at least a user-defined fraction of genomes (-m), indicating a single-nucleotide polymorphism at that position (only bi-allelic SNPs are retained).
+Each genome is streamed in chunks and its k-mers are extracted and inserted into a partitioned hash table. Every time a number of genomes is processed, low-frequency k-mers are filtered out. Once all genomes are processed, a final filter retains only *SNP-mers* that satisfy the user's or the default condition (--msf, --maf, --mko), indicating a single-nucleotide polymorphism at that position (only bi-allelic SNPs are retained).
 
-**Stage 2 — Per-genome SNP-mer counting (`pg_count_snp`)**
+**Stage 2 — Per-genome SNP-mer counting (`pgkmc count`)**
 
-Each genome is streamed again in chunks, and only its SNP-mers are inserted into a partitioned hash table, where per-genome allele counts - as well as chromosome name, genomic positions, and strand information (if required by the user) - are tracked. For each genome, this information is written to a genome-specific VCF file. After all genomes have been processed, the individual VCF files are merged into a single final VCF containing all SNPs and their corresponding per-genome information. This second pass is also parallelized across genomes, as the memory required to maintain multiple SNP-mer hash tables is substantially lower. Multiple genomes can therefore be processed concurrently, with each genome typically using 3–4 threads.
+The genome is streamed again in chunks together with a set of SNP-mers, output of pgkmc detect. SNP-mers repopulates the partitioned hash table, per-genome allele counts are performed. Optionally, chromosome name and genomic positions can be tracked. For each genome, this information is written to a genome-specific TSV file. The counts for each file can be merged downstream with a Python code, since the order of SNP-mers is the same across the files (if the SNP-mers file used is always the same).
+
+When counting k-mers, pgkmc operates in one stage:
+
+The genome is streamed in chunks and its k-mers are extracted and inserted into a partitioned hash table, where they get counted.
 
 ---
 
@@ -32,8 +35,8 @@ Each genome is streamed again in chunks, and only its SNP-mers are inserted into
 **Dependencies:** `zlib`, `pthreads`, a C compiler supporting C11 (GCC or Clang).
 
 ```bash
-git clone https://github.com/gbotta7/pgtools.git
-cd pgtools/src
+git clone https://github.com/gbotta7/pgkmc.git
+cd pgkmc/src
 make
 ```
 
@@ -42,71 +45,59 @@ make
 ## General usage
 
 ```bash
-pgtools count [options] <in1.fa> [in2.fa [...]]
+pgkmc detect [options] <in1.fa> [in2.fa [...]]
+pgkmc count [options] <in.fa>
 ```
 
 To know more about options:
 ```bash
-pgtools count
+pgkmc detect
+pgkmc count
 ```
 
-To identify unique SNP-mers across 90% of the genomes in the mtb152 dataset against the mtb reference genome, using 18 threads:
+To identify unique SNP-mers present in at least 90% of the genomes in the mtb152 dataset, and count them in a specific file, using 12 threads:
 ```bash
-pgtools count -k21 -m0.9 -t18 \
-        -o mtb152_snpmers.vcf \
-        -r mtb152_asm/H37Rv.fa.gz \
-        mtb152_asm/*.fa
+pgkmc detect --snp -k21 -f2 --msf 0.9 -t12 -o mtb152_snpmers.txt mtb152_asm/*.fa;
+pgkmc count --snp -k21 -t12 --kmers mtb152_snpmers.txt -o mtb152_snpmers.tsv mtb152_asm/fileN.fa;
 ```
 
-To identify unique SNP-mers across 98% of the genomes in the hmn579 dataset against the reference (added to the assemblies), using 12 threads:
+To additionally keep mapping information of the SNP-mers:
 ```bash
-pgtools count -k31 -m0.98 -t12 \
-        -o hmn580_snpmers.vcf \
-        -r hmn_ref_asm/GRCh38_genomic.fna.gz \
-        hmn_ref_asm/GRCh38_genomic.fna.gz hmn579_asm/*.fa
+pgkmc count --snp -w -k21 -t12 --kmers mtb152_snpmers.txt -o mtb152_snpmers.tsv mtb152_asm/fileN.fa;
 ```
 
-To identify unique SNP-mers across 98% of the genomes in the hmn579 dataset against the reference (added to the assemblies) and keep mapping information across the pangenome, using 12 threads:
+To count k-mers in a specific file, using 3 threads:
 ```bash
-pgtools count -k31 -m0.98 -t12 \
-        -o hmn580_snpmers.vcf \
-        -r hmn_ref_asm/GRCh38_genomic.fna.gz \
-        -w \
-        hmn_ref_asm/GRCh38_genomic.fna.gz hmn579_asm/*.fa
+pgkmc count -k21 -t3 -o mtb152_kmers.tsv mtb152_asm/fileN.fa;
 ```
 
-### Options
-
-| Short      | Long               | Default | Description                                                                            |
-| ---------- | ------------------ | ------- | -------------------------------------------------------------------------------------- |
-| `-k INT`   | `--kmer INT`       | `31`    | k-mer size (must be odd and ≤ 31)                                                      |
-| `-m FLOAT` | `--min_freq FLOAT` | `0.95`  | Minimum fraction of genomes a k-mer must appear in to be retained                      |
-| `-p INT`   | `--pre INT`        | `10`    | Number of bits used for hash table partitioning (higher values create more partitions) |
-| `-f INT`   | `--filt_type INT`  | `2`     | Filter type for k-mer counting                                                         |
-| `-K INT`   | `--chunk_size INT` | `1.9g`  | Input chunk size used for streaming genomes                                            |
-| `-t INT`   | `--threads INT`    | `4`     | Number of worker threads                                                               |
-| `-w`       | `--write_info`     | off     | Write positions of all pangenome hits to the INFO field of the output VCF              |
-| `-b FILE`  | `--bed FILE`       | —       | Text file listing the BED files of regions to count — one path per line, one line per input FASTA, in the same order |
-| `-r FILE`  | `--ref FILE`       | —       | Reference genome used to define SNP-mers                                               |
-| `-o FILE`  | `--output FILE`    | —       | Output VCF containing genome-specific SNPs and all their hits in the pangenome (if `-w` is set) |
-| `-v`       | `--verbose`        | off     | Enable verbose logging       
+To identify all centromeric SNP-mers present in at least 50% of the genomes, with MAF > 0.05, in the HPRC dataset, and count them in a specific file, using 3 threads:
+```bash
+pgkmc detect --snp -k31 -f0 --msf 0.5 --maf 0.05 -t3 \ 
+        -b hprc_cent_anno_files.txt \ 
+        -o hprc_cent_snpmers.txt \ 
+        hprc_asm/*.fa;
+pgkmc count --snp -k31 -t12 --kmers hprc_cent_snpmers.txt \ 
+        -b hprc_cent_anno/fileN.bed \ 
+        -o hprc_cent_snpmers.tsv hprc_asm/fileN.fa;
+```    
 
 
-#### SNP filtering (`-f`)
+#### SNP filtering (`-f/--filt_type`)
 
 Controls which SNP-mers are retained:
 
 | Value         | Description                                                                                                  |
 | ------------- | ------------------------------------------------------------------------------------------------------------ |
 | `2` (default) | Keep only unique SNP-mers.                                                                                   |
-| `1`           | Keep SNPs that occur multiple times, provided that each genome contains only one allele at the SNP position. |
+| `1`           | Keep SNPs that occur multiple times, provided that each genome contains only one allele at the SNP positions. |
 | `0`           | Keep all SNPs without filtering.                                                                             |
 
 Use `-f 1` or `-f 0` if you want to retain non-unique SNP-mers.
 
 #### Restricting to specific regions (`-b`)
 
-`-b` takes a single text file listing the paths of all the BED files, one per fasta file passed. Therefore, the list must have exactly as many entries as there are input files.
+`-b/--bed_list` takes a single text file listing the paths of all the BED files in pgkmc detect, one per fasta file passed. Therefore, the list must have exactly as many entries as there are input files. In pgkmc count, `-b/--bed` takes a single bed file with the regions of interest in the input fasta file.
 
 ---
 
@@ -116,8 +107,9 @@ Use `-f 1` or `-f 0` if you want to retain non-unique SNP-mers.
 |------|---------|
 | `main.c` | Entry point and CLI parsing |
 | `bed.c/h` | BED files handling |
-| `count.c` | K-mer counting, SNP-mer discovery, and per-genome counting pipelines |
-| `htab.c/h` | Partitioned hash table: insert, count, filter |
+| `count.c` | K-mer and SNP-mer counting, SNP-mer discovery |
+| `khtab.c/h` | Partitioned k-mer hash table: insert, count, filter |
+| `shtab.c/h` | Partitioned SNP-mer hash table: insert, count, filter |
 | `utils.c/h` | K-mer hashing, nucleotide tables, option initialization |
 | `kthread.c/h` | Thread pool primitives (`kt_for`, `kt_pipeline`) |
 | `parser.c/h` | FASTA/FASTQ streaming via kseq |
